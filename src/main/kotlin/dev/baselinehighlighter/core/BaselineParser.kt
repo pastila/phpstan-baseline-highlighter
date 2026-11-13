@@ -27,7 +27,7 @@ object BaselineParser {
                 val count = fields["count"]?.value?.toIntOrNull()
                 if (fields.containsKey("count") && (count == null || count <= 0)) issue(itemLine, "entry.invalid.count")
                 if (path.value.any { it in "*?[]%" || it == '\u0000' }) issue(path.line, "entry.unsupported.path")
-                entries += BaselineEntry(message.value, path.value, fields["identifier"]?.value, count, message.range, message.line)
+                entries += BaselineEntry(message.value, path.value, fields["identifier"]?.value, count, message.range, message.line, fields["identifier"]?.range, path.range)
             }
             fields.clear()
             activeItem = false

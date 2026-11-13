@@ -17,7 +17,7 @@ class BaselineWithoutPhpTest : BasePlatformTestCase() {
         for (id in listOf("com.jetbrains.php", "ru.openide.openphp")) {
             assertTrue(com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId(id))?.isEnabled != true)
         }
-        val source = myFixture.addFileToProject("baseline.neon", "parameters:\n  ignoreErrors:\n    -\n      message: '#^Message$#'\n      path: File.php\n")
+        val source = myFixture.addFileToProject("baseline.neon", "parameters:\n  ignoreErrors:\n    -\n      message: '#^Message$#'\n      identifier: missingType.return\n      path: File.php\n")
         project.service<BaselineSettings>().replace(BaselineSettings.Data(sources = mutableListOf(BaselineSettings.Source(path = source.virtualFile.path))))
         val service = project.service<BaselineIndexService>()
         service.reload()
@@ -25,5 +25,19 @@ class BaselineWithoutPhpTest : BasePlatformTestCase() {
         val file = myFixture.configureByText("File.php", "<?php class Example {}")
         assertNull(PhpDeclarationProvider.forFile(file))
         assertTrue(PhpBaselineMatcher.bindings(file).isEmpty())
+        val query = project.service<dev.baselinehighlighter.query.BaselineQueryService>()
+        val result = query.find(filePath = service.snapshot.byFile.keys.single())
+        assertEquals("ready", result.state)
+        assertEquals(1, result.entries.size)
+        assertEquals(1, query.find(identifier = "missingType.return").total)
+        try {
+            query.find(className = "Example")
+            fail("Symbol lookup should require a PHP adapter")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message!!.contains("PHP plugin"))
+        }
+        if (System.getProperty("baseline.mcpServerEnabled") == "false") {
+            assertTrue(com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId("com.intellij.mcpServer"))?.isEnabled != true)
+        }
     }
 }

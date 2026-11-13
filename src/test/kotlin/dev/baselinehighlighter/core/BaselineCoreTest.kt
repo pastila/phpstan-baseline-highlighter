@@ -20,6 +20,19 @@ class BaselineCoreTest {
         assertTrue(source.substring(entry.range.start, entry.range.end).endsWith("$#'"))
     }
 
+    @Test fun `identifier source range preserves BOM CRLF and quoted escapes`() {
+        val source = "\uFEFFparameters:\r\n  ignoreErrors:\r\n    -\r\n      message: '#^Message$#'\r\n      identifier: \"missingType.\\u0069terableValue\" # note\r\n      path: File.php\r\n"
+        val result = BaselineParser.parse(source)
+        assertTrue(result.issues.toString(), result.issues.isEmpty())
+        val entry = result.entries.single()
+        assertEquals("missingType.iterableValue", entry.identifier)
+        val range = entry.identifierRange!!
+        assertEquals("\"missingType.\\u0069terableValue\"", source.substring(range.start, range.end))
+        assertEquals("'#^Message$#'", source.substring(entry.range.start, entry.range.end))
+        assertEquals("File.php", source.substring(entry.pathRange!!.start, entry.pathRange.end))
+        assertNull(parse("message: '#^X$#'\npath: A.php").entries.single().identifierRange)
+    }
+
     @Test fun `double quoted scalars decode JSON escapes before PCRE`() {
         val result = parse("""
             message: "#^Method App\\\\Service\\:\\:save\\(\\) has no return type specified\\.$#"

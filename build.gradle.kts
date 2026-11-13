@@ -19,6 +19,8 @@ repositories {
 
 val phpBackend = providers.gradleProperty("phpBackend").orElse("jetbrains")
 val openPhpPluginPath = providers.gradleProperty("openPhpPluginPath")
+val mcpServerPluginPath = providers.gradleProperty("mcpServerPluginPath")
+val mcpServerEnabled = providers.gradleProperty("mcpServerEnabled").map(String::toBoolean).orElse(true)
 val openPhpSdkZip = layout.projectDirectory.file(".intellijPlatform/sdk/php-for-openide-0.9.9.zip")
 val downloadOpenPhpSdk by tasks.registering {
     val checksum = "805b689889b37971c7f2b0f08d264d8ef33b9d1a210b20324373d753d0e02718"
@@ -50,6 +52,11 @@ val unpackOpenPhpSdk by tasks.registering(Sync::class) {
 }
 
 dependencies {
+    if (!mcpServerEnabled.get()) {
+        require(mcpServerPluginPath.isPresent) { "Pass -PmcpServerPluginPath=/path/to/mcpserver to compile without installing MCP Server." }
+        compileOnly(fileTree(mcpServerPluginPath.get()) { include("lib/*.jar") })
+        testCompileOnly(fileTree(mcpServerPluginPath.get()) { include("lib/*.jar") })
+    }
     if (openPhpPluginPath.isPresent) compileOnly(fileTree(openPhpPluginPath.get()) { include("lib/*.jar"); exclude("**/*-searchableOptions.jar") })
     else compileOnly(files(fileTree(unpackOpenPhpSdk.map { it.destinationDir }) { include("**/lib/*.jar"); exclude("**/*-searchableOptions.jar") }).builtBy(unpackOpenPhpSdk))
     intellijPlatform {
@@ -66,6 +73,10 @@ dependencies {
         }
         if (providers.gradleProperty("platformType").get() == "IU" && localPath == null) bundledModules("com.intellij.modules.ultimate")
         bundledPlugin("com.intellij.modules.json")
+        if (mcpServerEnabled.get()) {
+            if (mcpServerPluginPath.isPresent) localPlugin(mcpServerPluginPath.get())
+            else bundledPlugin("com.intellij.mcpServer")
+        }
         val frameworkVersion = providers.gradleProperty("testFrameworkVersion").orNull
         if (frameworkVersion == null) testFramework(TestFrameworkType.Platform)
         else testFramework(TestFrameworkType.Platform, frameworkVersion)
@@ -98,9 +109,14 @@ tasks.test {
     maxHeapSize = "1g"
     systemProperty("java.awt.headless", "true")
     systemProperty("baseline.phpBackend", phpBackend.get())
+    systemProperty("baseline.mcpServerEnabled", mcpServerEnabled.get())
     filter {
-        if (phpBackend.get() == "none") excludeTestsMatching("*.BaselineIntegrationTest")
+        if (phpBackend.get() == "none") {
+            excludeTestsMatching("*.BaselineIntegrationTest")
+            excludeTestsMatching("*.BaselineMcpToolsetTest")
+        }
         else excludeTestsMatching("*.BaselineWithoutPhpTest")
+        if (!mcpServerEnabled.get()) excludeTestsMatching("*.BaselineMcpToolsetTest")
     }
     reports.html.outputLocation.set(layout.buildDirectory.dir("reports/tests/${phpBackend.get()}"))
     reports.junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/${phpBackend.get()}"))

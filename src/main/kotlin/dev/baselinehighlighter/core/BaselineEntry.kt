@@ -8,6 +8,8 @@ data class BaselineEntry(
     val count: Int?,
     val range: SourceRange,
     val line: Int,
+    val identifierRange: SourceRange? = null,
+    val pathRange: SourceRange? = null,
 )
 data class ParseIssue(val line: Int, val message: String)
 data class ParseResult(val entries: List<BaselineEntry>, val issues: List<ParseIssue>)

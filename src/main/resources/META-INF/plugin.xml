@@ -9,11 +9,14 @@
     <depends>com.intellij.modules.platform</depends>
     <depends optional="true" config-file="dev.baselinehighlighter-jetbrains.xml">com.jetbrains.php</depends>
     <depends optional="true" config-file="dev.baselinehighlighter-openphp.xml">ru.openide.openphp</depends>
+    <depends optional="true" config-file="dev.baselinehighlighter-mcp.xml">com.intellij.mcpServer</depends>
     <extensionPoints>
         <extensionPoint name="phpDeclarationProvider" interface="dev.baselinehighlighter.php.PhpDeclarationProvider" dynamic="true"/>
     </extensionPoints>
     <resource-bundle>messages.BaselineBundle</resource-bundle>
     <extensions defaultExtensionNs="com.intellij">
+        <gotoDeclarationHandler implementation="dev.baselinehighlighter.editor.BaselinePathDeclarationHandler" order="first"/>
+        <platform.backend.documentation.targetProvider implementation="dev.baselinehighlighter.documentation.BaselineDocumentationTargetProvider" order="first"/>
         <postStartupActivity implementation="dev.baselinehighlighter.index.BaselineStartupActivity"/>
         <codeInsight.lineMarkerProvider language="PHP" implementationClass="dev.baselinehighlighter.editor.BaselineLineMarkerProvider"/>
         <projectConfigurable id="dev.baselinehighlighter.settings" parentId="language" displayName="PHPStan Baseline Highlighter" instance="dev.baselinehighlighter.settings.BaselineSourcesConfigurable"/>

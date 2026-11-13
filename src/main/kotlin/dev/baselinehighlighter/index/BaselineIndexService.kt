@@ -51,6 +51,7 @@ class BaselineIndexService(private val project: Project, private val coroutineSc
     private val started = AtomicBoolean()
     private val generation = AtomicLong()
     private val version = AtomicLong()
+    @Volatile private var publishedGeneration = -1L
     private val lock = Any()
     private val pending = mutableSetOf<String>()
     private var refreshAll = false
@@ -60,6 +61,7 @@ class BaselineIndexService(private val project: Project, private val coroutineSc
     override fun getModificationCount(): Long = version.get()
     fun normalize(path: String): String = BaselinePathResolver.resolve(path, project.basePath ?: "", SystemInfoRt.isFileSystemCaseSensitive)
     fun entries(path: String): List<IndexedEntry> = snapshot.byFile[normalize(path)].orEmpty()
+    val isUpdating: Boolean get() = publishedGeneration != generation.get()
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
@@ -130,6 +132,7 @@ class BaselineIndexService(private val project: Project, private val coroutineSc
         synchronized(lock) {
             if (generation.get() != ticket || project.isDisposed) return
             snapshot = IndexSnapshot(byFile, sources)
+            publishedGeneration = ticket
             version.incrementAndGet()
             pending.clear()
             refreshAll = false
