@@ -15,6 +15,10 @@
     </extensionPoints>
     <resource-bundle>messages.BaselineBundle</resource-bundle>
     <extensions defaultExtensionNs="com.intellij">
+        <psi.symbolReferenceProvider hostLanguage="TEXT" hostElementClass="com.intellij.psi.PsiPlainTextFile"
+                                     referenceClass="dev.baselinehighlighter.editor.BaselinePathSymbolReference"
+                                     targetClass="com.intellij.model.Symbol"
+                                     implementationClass="dev.baselinehighlighter.editor.BaselinePathReferenceProvider"/>
         <gotoDeclarationHandler implementation="dev.baselinehighlighter.editor.BaselinePathDeclarationHandler" order="first"/>
         <platform.backend.documentation.targetProvider implementation="dev.baselinehighlighter.documentation.BaselineDocumentationTargetProvider" order="first"/>
         <postStartupActivity implementation="dev.baselinehighlighter.index.BaselineStartupActivity"/>
