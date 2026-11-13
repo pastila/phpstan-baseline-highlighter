@@ -1,0 +1,26 @@
+<idea-plugin>
+    <id>dev.baselinehighlighter</id>
+    <name>PHPStan Baseline Highlighter</name>
+    <vendor>Baseline Highlighter</vendor>
+    <description><![CDATA[
+        Shows PHPStan baseline entries on PHP class and method declarations, with tooltips and navigation.
+        Reads explicitly selected NEON files locally without running PHPStan.
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+    <depends optional="true" config-file="dev.baselinehighlighter-jetbrains.xml">com.jetbrains.php</depends>
+    <depends optional="true" config-file="dev.baselinehighlighter-openphp.xml">ru.openide.openphp</depends>
+    <extensionPoints>
+        <extensionPoint name="phpDeclarationProvider" interface="dev.baselinehighlighter.php.PhpDeclarationProvider" dynamic="true"/>
+    </extensionPoints>
+    <resource-bundle>messages.BaselineBundle</resource-bundle>
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="dev.baselinehighlighter.index.BaselineStartupActivity"/>
+        <codeInsight.lineMarkerProvider language="PHP" implementationClass="dev.baselinehighlighter.editor.BaselineLineMarkerProvider"/>
+        <projectConfigurable id="dev.baselinehighlighter.settings" parentId="language" displayName="PHPStan Baseline Highlighter" instance="dev.baselinehighlighter.settings.BaselineSourcesConfigurable"/>
+    </extensions>
+    <actions>
+        <action id="BaselineHighlighter.ShowEntries" class="dev.baselinehighlighter.editor.ShowBaselineEntriesAction">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

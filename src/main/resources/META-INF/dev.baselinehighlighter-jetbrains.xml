@@ -1,0 +1,5 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="dev.baselinehighlighter">
+        <phpDeclarationProvider implementation="dev.baselinehighlighter.php.jetbrains.JetBrainsPhpDeclarationProvider"/>
+    </extensions>
+</idea-plugin>
