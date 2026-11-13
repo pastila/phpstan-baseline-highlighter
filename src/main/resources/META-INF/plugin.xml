@@ -16,6 +16,12 @@
     <resource-bundle>messages.BaselineBundle</resource-bundle>
     <extensions defaultExtensionNs="com.intellij">
         <psi.symbolReferenceProvider hostLanguage="TEXT" hostElementClass="com.intellij.psi.PsiPlainTextFile"
+                                     referenceClass="dev.baselinehighlighter.phpat.PhpatRuleReference"
+                                     targetClass="com.intellij.model.Symbol"
+                                     implementationClass="dev.baselinehighlighter.phpat.PhpatRuleReferenceProvider"/>
+        <gotoDeclarationHandler implementation="dev.baselinehighlighter.phpat.PhpatRuleDeclarationHandler" order="first"/>
+        <platform.backend.documentation.linkHandler implementation="dev.baselinehighlighter.phpat.PhpatDocumentationLinkHandler"/>
+        <psi.symbolReferenceProvider hostLanguage="TEXT" hostElementClass="com.intellij.psi.PsiPlainTextFile"
                                      referenceClass="dev.baselinehighlighter.editor.BaselinePathSymbolReference"
                                      targetClass="com.intellij.model.Symbol"
                                      implementationClass="dev.baselinehighlighter.editor.BaselinePathReferenceProvider"/>

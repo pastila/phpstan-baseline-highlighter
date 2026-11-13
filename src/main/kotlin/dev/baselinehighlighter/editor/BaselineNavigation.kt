@@ -28,7 +28,7 @@ object BaselineNavigation {
 
     internal fun createChooser(project: Project, entries: List<IndexedEntry>): JBPopup {
         require(entries.isNotEmpty())
-        val details = BaselineEntryDetailsPanel().apply { showEntry(entries.first()) }
+        val details = BaselineEntryDetailsPanel(project = project).apply { showEntry(entries.first()) }
         return JBPopupFactory.getInstance().createPopupChooserBuilder(entries)
             .setTitle(message("navigation.title"))
             .setMovable(true)

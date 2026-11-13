@@ -15,6 +15,10 @@ import dev.baselinehighlighter.core.BaselineEntry
 import dev.baselinehighlighter.core.BaselineMessageClassifier
 import dev.baselinehighlighter.core.SourceRange
 import dev.baselinehighlighter.neon.BaselineNeonEntryLocator
+import dev.baselinehighlighter.phpat.PhpatRuleResolver
+import dev.baselinehighlighter.phpat.PhpatDocumentationLinkHandler
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.pom.Navigatable
 
 /** Uses text ranges instead of vendor-specific NEON PSI, including plain-text .neon files. */
 class BaselineDocumentationTargetProvider : DocumentationTargetProvider {
@@ -45,6 +49,11 @@ internal class BaselineDocumentationTarget(private val file: PsiFile, private va
     }
 
     override fun computePresentation(): TargetPresentation = TargetPresentation.builder(entry.identifier.orEmpty()).presentation()
+
+    internal fun ruleTargets(): List<PhpatRuleResolver.Target> = currentEntry()?.let { PhpatRuleResolver.resolve(file, it.identifier) }.orEmpty()
+
+    override val navigatable: Navigatable?
+        get() = ruleTargets().singleOrNull()?.element?.let { OpenFileDescriptor(it.project, it.containingFile.virtualFile, it.textOffset) }
 
     override fun computeDocumentationHint(): String? = currentEntry()?.let(::html)
 
@@ -77,6 +86,11 @@ internal class BaselineDocumentationTarget(private val file: PsiFile, private va
         append("<p>${escape(BaselineMessageClassifier.display(current.message).take(500))}</p>")
         append("<p><i>${escape(message("tooltip.unverified"))}</i></p>")
         info.documentationUrl?.let { append("<p><a href=\"${escape(it)}\">${escape(message("documentation.open"))}</a></p>") }
+        PhpatRuleResolver.resolve(file, current.identifier).forEach { target ->
+            append("<p><a href=\"${escape(PhpatDocumentationLinkHandler.url(target.label))}\">${escape(message("phpat.declaration"))}: ${escape(target.label)}</a>")
+            if (target.method.collection) append("<br>${escape(message("phpat.generator.hint"))}")
+            append("</p>")
+        }
         append(DocumentationMarkup.CONTENT_END)
     }
 

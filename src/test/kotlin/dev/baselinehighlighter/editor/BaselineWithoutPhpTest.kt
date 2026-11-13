@@ -14,6 +14,9 @@ class BaselineWithoutPhpTest : BasePlatformTestCase() {
 
     fun testPluginLoadsAndIndexesWithoutEitherPhpPlugin() {
         assertTrue(PhpDeclarationProvider.EP.extensionList.isEmpty())
+        val phpat = myFixture.addFileToProject("phpat.neon", "parameters:\n  ignoreErrors:\n    -\n      message: '#^Architecture$#'\n      identifier: phpat.testRule\n      path: File.php\n")
+        myFixture.addFileToProject("phpstan.neon", "includes:\n  - phpat.neon\nservices:\n  -\n    class: Tests\\Architecture\n    tags: [phpat.test]\n")
+        assertTrue(dev.baselinehighlighter.phpat.PhpatRuleResolver.resolve(phpat, "phpat.testRule").isEmpty())
         for (id in listOf("com.jetbrains.php", "ru.openide.openphp")) {
             assertTrue(com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId(id))?.isEnabled != true)
         }

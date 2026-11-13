@@ -104,7 +104,7 @@ object BaselineParser {
         return ParseResult(if (issues.isEmpty()) entries else emptyList(), issues)
     }
 
-    private fun scalar(text: String): Pair<String, Int> {
+    internal fun scalar(text: String): Pair<String, Int> {
         require(text.isNotEmpty() && !text.startsWith("'''") && !text.startsWith("\"\"\""))
         if (text[0] != '\'' && text[0] != '"') {
             val raw = text.substringBefore(" #").trimEnd()

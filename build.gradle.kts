@@ -112,6 +112,7 @@ tasks.test {
     systemProperty("baseline.mcpServerEnabled", mcpServerEnabled.get())
     filter {
         if (phpBackend.get() == "none") {
+            excludeTestsMatching("*.PhpatNavigationTest")
             excludeTestsMatching("*.BaselineIntegrationTest")
             excludeTestsMatching("*.BaselineMcpToolsetTest")
         }
