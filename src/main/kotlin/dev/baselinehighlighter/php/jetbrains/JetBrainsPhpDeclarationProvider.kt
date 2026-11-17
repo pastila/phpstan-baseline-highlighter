@@ -21,7 +21,8 @@ class JetBrainsPhpDeclarationProvider : PhpDeclarationProvider {
             type.methods.filter { method -> method.modifier.isPublic && (method.name.startsWith("test") ||
                 method.attributes.any { it.fqn?.trimStart('\\') == "PHPat\\Test\\Attributes\\TestRule" })
             }.mapNotNull { method -> method.nameIdentifier?.let {
-                PhpatMethod(method.name, it, PhpatRuleNames.returnsCollection(method.docComment?.text.orEmpty() + "\n" + method.text))
+                PhpatMethod(method.name, it, PhpatRuleNames.returnsCollection(method.docComment?.text.orEmpty() + "\n" + method.text),
+                    type.methods.firstOrNull { candidate -> candidate.name.equals("getYamlPaths", true) })
             } }
         }
 

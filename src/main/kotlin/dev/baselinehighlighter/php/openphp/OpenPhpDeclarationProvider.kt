@@ -30,14 +30,16 @@ class OpenPhpDeclarationProvider : PhpDeclarationProvider {
                 return PhpDeclarations.classOf(current).valueOrNull()?.ownMethods.orEmpty() +
                     PhpHierarchy.superTypes(current).types.flatMap(::methods)
             }
-            methods(type).distinctBy { (it as? PsiNameIdentifierOwner)?.name?.lowercase(Locale.ROOT) }.mapNotNull { element ->
+            val effectiveMethods = methods(type).distinctBy { (it as? PsiNameIdentifierOwner)?.name?.lowercase(Locale.ROOT) }
+            val paths = effectiveMethods.firstOrNull { (it as? PsiNameIdentifierOwner)?.name.equals("getYamlPaths", true) }
+            effectiveMethods.mapNotNull { element ->
                 val method = PhpDeclarations.methodOf(element).valueOrNull() ?: return@mapNotNull null
                 if (method.flags.visibility != PhpVisibility.PUBLIC) return@mapNotNull null
                 if (!method.name.startsWith("test") && PhpAttributes.of(element).valueOrNull().orEmpty().none {
                     it.fqn.trimStart('\\') == "PHPat\\Test\\Attributes\\TestRule"
                 }) return@mapNotNull null
                 val identifier = (element as? PsiNameIdentifierOwner)?.nameIdentifier ?: return@mapNotNull null
-                PhpatMethod(method.name, identifier, PhpatRuleNames.returnsCollection(element.text))
+                PhpatMethod(method.name, identifier, PhpatRuleNames.returnsCollection(element.text), paths)
             }
         }
 

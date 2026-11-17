@@ -53,7 +53,7 @@ internal class BaselineDocumentationTarget(private val file: PsiFile, private va
     internal fun ruleTargets(): List<PhpatRuleResolver.Target> = currentEntry()?.let { PhpatRuleResolver.resolve(file, it.identifier) }.orEmpty()
 
     override val navigatable: Navigatable?
-        get() = ruleTargets().singleOrNull()?.element?.let { OpenFileDescriptor(it.project, it.containingFile.virtualFile, it.textOffset) }
+        get() = ruleTargets().singleOrNull()?.let { OpenFileDescriptor(it.element.project, it.element.containingFile.virtualFile, it.offset) }
 
     override fun computeDocumentationHint(): String? = currentEntry()?.let(::html)
 
@@ -88,7 +88,7 @@ internal class BaselineDocumentationTarget(private val file: PsiFile, private va
         info.documentationUrl?.let { append("<p><a href=\"${escape(it)}\">${escape(message("documentation.open"))}</a></p>") }
         PhpatRuleResolver.resolve(file, current.identifier).forEach { target ->
             append("<p><a href=\"${escape(PhpatDocumentationLinkHandler.url(target.label))}\">${escape(message("phpat.declaration"))}: ${escape(target.label)}</a>")
-            if (target.method.collection) append("<br>${escape(message("phpat.generator.hint"))}")
+            if (target.method.collection) append("<br>${escape(message(target.hintKey))}")
             append("</p>")
         }
         append(DocumentationMarkup.CONTENT_END)

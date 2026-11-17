@@ -219,4 +219,139 @@ class PhpatNavigationTest : BasePlatformTestCase() {
         WriteCommandAction.runWriteCommandAction(project) { configuration.viewProvider.document!!.setText("services:\n  -\n    class: Tests\\Rules\n    tags: [phpat.test]\n") }
         assertTrue(PhpatRuleResolver.resolve(source, "phpat.domainCanOnlyDependOn").isEmpty())
     }
+
+    private fun yamlGenerator(paths: String = "__DIR__ . '/../config/architecture.yaml'"): PsiFile =
+        myFixture.addFileToProject("tests/Rules.php", """
+            <?php namespace Tests;
+            class Rules {
+                #[\PHPat\Test\Attributes\TestRule]
+                public function architectureRules(): array { return []; }
+                protected function getYamlPaths(): array { return [$paths]; }
+            }
+        """.trimIndent())
+
+    private fun architecture(): PsiFile = myFixture.addFileToProject("config/architecture.yaml", """
+        # 😀 offsets are UTF-16
+        contexts:
+          Sales:
+            - Orders
+        layer_templates:
+          Domain.Service:
+            dependencies:
+              type: canOnlyDependOn
+              targets:
+                - '{context}\Domain'
+    """.trimIndent())
+
+    fun testArchitectureConditionSupportsCtrlNavigationAndDocumentationAtExactOffset() {
+        yamlGenerator()
+        val yaml = architecture()
+        config()
+        val identifier = "phpat.architectureRulesSalesOrdersDomainServiceDependencies"
+        val source = baseline(identifier)
+        val offset = source.text.indexOf(identifier)
+        val target = PhpatRuleResolver.resolve(source, identifier).single()
+        assertEquals(yaml.virtualFile, target.element.containingFile.virtualFile)
+        assertEquals(yaml.text.indexOf("dependencies:"), target.offset)
+        assertNotNull(target.configuration)
+        val hover = hoverAt(source, offset + 3)!!
+        assertEquals(TextRange(offset, offset + identifier.length), hover.ranges.single())
+        val doc = BaselineDocumentationTargetProvider().documentationTargets(source, offset).single()
+        assertTrue(doc.computeDocumentationHint()!!.contains(dev.baselinehighlighter.BaselineBundle.message("phpat.configuration.hint")))
+        val url = PhpatDocumentationLinkHandler.url(target.label)
+        assertNotNull(PhpatDocumentationLinkHandler().resolveLink(doc, url))
+        val identifierToken = object : com.intellij.psi.impl.FakePsiElement() {
+            override fun getParent() = source
+            override fun getTextRange() = TextRange(offset, offset + identifier.length)
+        }
+        val psiTarget = PhpatRuleDeclarationHandler().getGotoDeclarationTargets(identifierToken, offset, myFixture.editor)!!.single()
+        assertEquals(yaml.text.indexOf("dependencies:"), psiTarget.textOffset)
+        (psiTarget as com.intellij.pom.Navigatable).navigate(true)
+        assertEquals(yaml.virtualFile, FileEditorManager.getInstance(project).selectedFiles.single())
+        doc.navigatable!!.navigate(true)
+        assertEquals(yaml.text.indexOf("dependencies:"), FileEditorManager.getInstance(project).selectedTextEditor!!.caretModel.offset)
+        myFixture.configureFromExistingVirtualFile(source.virtualFile)
+        myFixture.editor.caretModel.moveToOffset(offset + 3)
+        myFixture.performEditorAction(IdeActions.ACTION_GOTO_DECLARATION)
+        PlatformTestUtil.waitWithEventsDispatching("Architecture condition did not open", {
+            yaml.virtualFile in FileEditorManager.getInstance(project).selectedFiles
+        }, 15)
+        assertEquals(yaml.text.indexOf("dependencies:"), FileEditorManager.getInstance(project).selectedTextEditor!!.caretModel.offset)
+    }
+
+    fun testUnsavedYamlEditsRemovalAndRecreationInvalidateConditionTargets() {
+        val rule = yamlGenerator()
+        val yaml = architecture()
+        config()
+        val identifier = "phpat.architectureRulesSalesOrdersDomainServiceDependencies"
+        val source = baseline(identifier)
+        val first = PhpatRuleResolver.resolve(source, identifier).single()
+        val pointer = first.pointer()
+        val document = yaml.viewProvider.document!!
+        WriteCommandAction.runWriteCommandAction(project) { document.insertString(0, "# shifted\n") }
+        val shifted = PhpatRuleResolver.resolve(source, identifier).single()
+        assertEquals(first.offset + 10, shifted.offset)
+        assertEquals(shifted.offset, pointer.range!!.startOffset)
+        WriteCommandAction.runWriteCommandAction(project) { document.setText(document.text.replace("dependencies:", "renamed:")) }
+        assertNull(PhpatRuleResolver.resolve(source, identifier).single().configuration)
+        WriteCommandAction.runWriteCommandAction(project) { yaml.virtualFile.delete(this) }
+        assertEquals(rule.virtualFile, PhpatRuleResolver.resolve(source, identifier).single().element.containingFile.virtualFile)
+        architecture()
+        assertNotNull(PhpatRuleResolver.resolve(source, identifier).single().configuration)
+    }
+
+    fun testYamlOverridesAndDynamicPathsKeepConservativeGeneratorFallback() {
+        yamlGenerator("__DIR__ . '/../config/architecture.yaml', __DIR__ . '/../config/extra.yaml'")
+        architecture()
+        val extra = myFixture.addFileToProject("config/extra.yaml", "layer_templates:\n  UseCase:\n    onePublicMethod: true\n")
+        config()
+        val identifier = "phpat.architectureRulesSalesOrdersDomainServiceDependencies"
+        val source = baseline(identifier)
+        assertNull(PhpatRuleResolver.resolve(source, identifier).single().configuration)
+        val override = PhpatRuleResolver.resolve(source, "phpat.architectureRulesSalesOrdersUseCaseOnePublicMethod").single()
+        assertEquals(extra.virtualFile, override.element.containingFile.virtualFile)
+        WriteCommandAction.runWriteCommandAction(project) { extra.viewProvider.document!!.setText("metadata:\n  root_namespace: Example\n") }
+        assertNotNull(PhpatRuleResolver.resolve(source, identifier).single().configuration)
+        val rule = yamlGenerator("__DIR__ . '/../config/architecture.yaml', getenv('DYNAMIC')")
+        PsiDocumentManager.getInstance(project).commitAllDocuments()
+        assertNull(PhpatRuleResolver.resolve(source, identifier).single().configuration)
+        assertEquals(rule.virtualFile, PhpatRuleResolver.resolve(source, identifier).single().element.containingFile.virtualFile)
+    }
+
+    fun testInheritedGeneratorUsesOverriddenPathsAndIgnoresUnrelatedYaml() {
+        myFixture.addFileToProject("base/ParentRules.php", """
+            <?php namespace Tests;
+            class ParentRules {
+                #[\PHPat\Test\Attributes\TestRule]
+                public function architectureRules(): array { return []; }
+                protected function getYamlPaths(): array { return [__DIR__ . '/missing.yaml']; }
+            }
+        """.trimIndent())
+        myFixture.addFileToProject("tests/Rules.php", """
+            <?php namespace Tests;
+            class Rules extends ParentRules {
+                protected function getYamlPaths(): array { return [__DIR__ . '/../config/architecture.yaml']; }
+            }
+        """.trimIndent())
+        val yaml = architecture()
+        myFixture.addFileToProject("unrelated/architecture.yaml", yaml.text)
+        config()
+        val identifier = "phpat.architectureRulesSalesOrdersDomainServiceDependencies"
+        val source = baseline(identifier)
+        assertEquals(yaml.virtualFile, PhpatRuleResolver.resolve(source, identifier).single().element.containingFile.virtualFile)
+        val document = yaml.viewProvider.document!!
+        WriteCommandAction.runWriteCommandAction(project) { document.setText(document.text.replace("Sales:", "Other:")) }
+        assertNull(PhpatRuleResolver.resolve(source, identifier).single().configuration)
+    }
+
+    fun testDeletedPhpRuleInvalidatesItsNavigationPointer() {
+        val rule = php()
+        config()
+        val source = baseline()
+        val pointer = PhpatRuleResolver.resolve(source, "phpat.domainCanOnlyDependOn").single().pointer()
+        WriteCommandAction.runWriteCommandAction(project) { rule.viewProvider.document!!.setText("<?php namespace Tests; class Rules {}") }
+        PsiDocumentManager.getInstance(project).commitAllDocuments()
+        assertNull(pointer.element)
+        assertNull(pointer.range)
+    }
 }

@@ -9,7 +9,6 @@ import com.intellij.platform.backend.documentation.DocumentationTarget
 import com.intellij.platform.backend.documentation.LinkResolveResult
 import com.intellij.platform.backend.presentation.TargetPresentation
 import com.intellij.pom.Navigatable
-import com.intellij.psi.SmartPointerManager
 import dev.baselinehighlighter.BaselineBundle.message
 import dev.baselinehighlighter.documentation.BaselineDocumentationTarget
 import java.net.URLEncoder
@@ -30,18 +29,23 @@ class PhpatDocumentationLinkHandler : DocumentationLinkHandler {
 }
 
 private class PhpatDeclarationDocumentationTarget(rule: PhpatRuleResolver.Target) : DocumentationTarget {
-    private val pointer = SmartPointerManager.createPointer(rule.element)
+    private val pointer = rule.pointer()
     private val label = rule.label
-    private val generator = rule.method.collection
+    private val hintKey = rule.hintKey
+    private val configuration = rule.configuration != null
     override fun createPointer(): Pointer<out DocumentationTarget> = Pointer { takeIf { pointer.element != null } }
     override fun computePresentation(): TargetPresentation = TargetPresentation.builder(label).presentation()
     override val navigatable: Navigatable?
-        get() = pointer.element?.let { OpenFileDescriptor(it.project, it.containingFile.virtualFile, it.textOffset) }
+        get() = pointer.element?.let { file -> pointer.range?.let { OpenFileDescriptor(file.project, file.virtualFile, it.startOffset) } }
     override fun computeDocumentation(): DocumentationResult? {
         val element = pointer.element ?: return null
-        val explanation = message(if (generator) "phpat.generator.hint" else "phpat.source.hint")
+        val range = pointer.range ?: return null
+        val text = element.viewProvider.document?.immutableCharSequence ?: return null
+        val excerpt = if (configuration) text.subSequence(range.startOffset, minOf(text.length, range.startOffset + 1500)).toString()
+            else pointer.declarationElement?.parent?.text.orEmpty().take(4000)
+        val explanation = message(hintKey)
         return DocumentationResult.documentation("<div class='definition'>${StringUtil.escapeXmlEntities(label)}</div>" +
             "<div class='content'><p>${StringUtil.escapeXmlEntities(explanation)}</p>" +
-            "<pre>${StringUtil.escapeXmlEntities(element.parent.text.take(4000))}</pre></div>")
+            "<pre>${StringUtil.escapeXmlEntities(excerpt)}</pre></div>")
     }
 }

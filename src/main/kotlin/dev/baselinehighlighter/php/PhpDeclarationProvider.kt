@@ -8,7 +8,8 @@ import com.intellij.openapi.project.Project
 data class PhpMethod(val name: String, val identifier: PsiElement)
 data class PhpType(val fqn: String, val identifier: PsiElement, val methods: List<PhpMethod>)
 data class PhpFunction(val fqn: String, val identifier: PsiElement)
-data class PhpatMethod(val name: String, val identifier: PsiElement, val collection: Boolean)
+data class PhpatMethod(val name: String, val identifier: PsiElement, val collection: Boolean,
+    val architecturePathProvider: PsiElement? = null)
 
 /** Only optional integrations may depend on a PHP vendor's PSI classes. */
 interface PhpDeclarationProvider {

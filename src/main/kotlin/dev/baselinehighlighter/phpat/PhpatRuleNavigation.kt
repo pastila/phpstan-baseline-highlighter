@@ -26,7 +26,6 @@ import com.intellij.platform.backend.presentation.TargetPresentation
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
-import com.intellij.psi.SmartPointerManager
 import dev.baselinehighlighter.BaselineBundle.message
 import dev.baselinehighlighter.neon.BaselineNeonEntryLocator
 import javax.swing.JList
@@ -43,7 +42,7 @@ internal object PhpatRuleNavigation {
             val current = targets.filter { it.element.isValid }
             fun navigate(target: PhpatRuleResolver.Target) {
                 val element = target.element.takeIf { it.isValid } ?: return
-                OpenFileDescriptor(project, element.containingFile.virtualFile, element.textOffset).navigate(true)
+                OpenFileDescriptor(project, element.containingFile.virtualFile, target.offset).navigate(true)
             }
             when (current.size) {
                 0 -> Messages.showInfoMessage(project, message("phpat.not.found"), message("phpat.declaration"))
@@ -53,7 +52,7 @@ internal object PhpatRuleNavigation {
                     .setRenderer(object : SimpleListCellRenderer<PhpatRuleResolver.Target>() {
                         init { putClientProperty("html.disable", true) }
                         override fun customize(list: JList<out PhpatRuleResolver.Target>, value: PhpatRuleResolver.Target?, index: Int, selected: Boolean, hasFocus: Boolean) {
-                            text = value?.let { it.label + if (it.method.collection) " — ${message("phpat.generator")}" else "" }.orEmpty()
+                            text = value?.let { it.label + " — ${message(it.kindKey)}" }.orEmpty()
                         }
                     })
                     .setItemChosenCallback(::navigate).createPopup().showCenteredInCurrentWindow(project)
@@ -95,15 +94,16 @@ internal class PhpatRuleReference(private val source: PsiFile, private val link:
 }
 
 private class PhpatRuleSymbol(target: PhpatRuleResolver.Target) : Symbol, NavigationTarget {
-    private val pointer = SmartPointerManager.createPointer(target.element)
+    private val pointer = target.pointer()
     private val label = target.label
-    private val generator = target.method.collection
+    private val kindKey = target.kindKey
     override fun createPointer(): Pointer<PhpatRuleSymbol> = Pointer { takeIf { pointer.element != null } }
     override fun computePresentation(): TargetPresentation = TargetPresentation.builder(label)
-        .locationText(if (generator) message("phpat.generator") else message("phpat.declaration")).presentation()
+        .locationText(message(kindKey)).presentation()
     override fun navigationRequest(): NavigationRequest? {
         val element = pointer.element ?: return null
-        return NavigationRequest.sourceNavigationRequest(element.project, element.containingFile.virtualFile, element.textOffset)
+        val range = pointer.range ?: return null
+        return NavigationRequest.sourceNavigationRequest(element.project, element.virtualFile, range.startOffset)
     }
 }
 
@@ -114,6 +114,24 @@ class PhpatRuleDeclarationHandler : GotoDeclarationHandler {
         val source = sourceElement?.containingFile ?: PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return null
         val link = PhpatRuleNavigation.linkAt(source, offset) ?: return null
         if (sourceElement?.textRange?.let(link.rawRange::contains) != true) return null
-        return PhpatRuleResolver.resolve(source, link.identifier).map { it.element }.takeIf { it.isNotEmpty() }?.toTypedArray()
+        return PhpatRuleResolver.resolve(source, link.identifier).map { target ->
+            if (target.configuration == null) target.element else ArchitectureNavigationElement(target)
+        }.takeIf { it.isNotEmpty() }?.toTypedArray()
+    }
+}
+
+/** NEON PSI navigation needs a positioned element even when YAML is plain text. */
+private class ArchitectureNavigationElement(target: PhpatRuleResolver.Target) : com.intellij.psi.impl.FakePsiElement() {
+    private val pointer = target.pointer()
+    private val label = target.label
+    override fun getParent(): PsiElement? = pointer.element
+    override fun getName(): String = label
+    override fun getTextRange(): TextRange = pointer.range?.let { TextRange(it.startOffset, it.endOffset) } ?: TextRange.EMPTY_RANGE
+    override fun getTextOffset(): Int = textRange.startOffset
+    override fun isValid(): Boolean = pointer.element?.isValid == true && pointer.range != null
+    override fun navigate(requestFocus: Boolean) {
+        val file = pointer.element ?: return
+        val range = pointer.range ?: return
+        OpenFileDescriptor(file.project, file.virtualFile, range.startOffset).navigate(requestFocus)
     }
 }
