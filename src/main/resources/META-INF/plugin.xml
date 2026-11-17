@@ -3,7 +3,7 @@
     <name>PHPStan Baseline Highlighter</name>
     <vendor>Baseline Highlighter</vendor>
     <description><![CDATA[
-        Shows PHPStan baseline entries on PHP class and method declarations, with tooltips and navigation.
+        Shows PHPStan baseline entries on PHP class, method and named function declarations, with tooltips and navigation.
         Reads explicitly selected NEON files locally without running PHPStan.
     ]]></description>
     <depends>com.intellij.modules.platform</depends>

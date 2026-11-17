@@ -17,6 +17,7 @@ object BaselineMatcher {
         val methods = mutableMapOf<String, MutableMap<String, MutableList<BoundEntry>>>()
         for (entry in entries) {
             val owner = entry.owner
+            if (owner?.functionName != null) continue
             val classKey = owner?.className?.let(::key) ?: types.keys.singleOrNull() ?: continue
             if (classKey !in types) continue
             val method = owner?.methodName?.let(::key)
@@ -31,5 +32,15 @@ object BaselineMatcher {
             if (found) methods.getOrPut(classKey) { mutableMapOf() }.getOrPut(method) { mutableListOf() } += bound
         }
         return classes.mapValues { (name, records) -> ClassBindings(records, methods[name] ?: emptyMap()) }
+    }
+
+    fun bindFunctions(entries: List<IndexedEntry>, declarations: Set<String>): Map<String, List<BoundEntry>> {
+        val functions = declarations.map(::key).toSet()
+        val bound = mutableMapOf<String, MutableList<BoundEntry>>()
+        for (entry in entries) {
+            val function = entry.owner?.functionName?.let(::key) ?: continue
+            if (function in functions) bound.getOrPut(function) { mutableListOf() } += BoundEntry(entry)
+        }
+        return bound.mapValues { (_, records) -> records.toList() }
     }
 }

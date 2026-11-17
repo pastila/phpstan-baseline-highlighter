@@ -18,7 +18,8 @@ object PhpBaselineMatcher {
         val index = file.project.service<BaselineIndexService>()
         return CachedValuesManager.getManager(file.project).getCachedValue(file, cacheKey, {
             val entries = file.virtualFile?.let { index.entries(it.path) }.orEmpty()
-            val types = if (entries.isEmpty()) emptyList() else PhpDeclarationProvider.forFile(file)?.declarations(file).orEmpty()
+            val provider = if (entries.isEmpty()) null else PhpDeclarationProvider.forFile(file)
+            val types = provider?.declarations(file).orEmpty()
             val bound = BaselineMatcher.bind(entries, types.map { Declaration(it.fqn, it.methods.map { method -> method.name }.toSet()) })
             val byOffset = mutableMapOf<Int, List<BoundEntry>>()
             for (type in types) {
@@ -27,6 +28,14 @@ object PhpBaselineMatcher {
                 for (method in type.methods) {
                     val records = bindings.methods[BaselineMatcher.key(method.name)] ?: continue
                     byOffset[PsiTreeUtil.getDeepestFirst(method.identifier).textOffset] = records
+                }
+            }
+            if (entries.any { it.owner?.functionName != null }) {
+                val functions = provider?.functions(file).orEmpty()
+                val functionBindings = BaselineMatcher.bindFunctions(entries, functions.map { it.fqn }.toSet())
+                for (function in functions) {
+                    val records = functionBindings[BaselineMatcher.key(function.fqn)] ?: continue
+                    byOffset[PsiTreeUtil.getDeepestFirst(function.identifier).textOffset] = records
                 }
             }
             CachedValueProvider.Result.create(byOffset.toMap(), file, index)

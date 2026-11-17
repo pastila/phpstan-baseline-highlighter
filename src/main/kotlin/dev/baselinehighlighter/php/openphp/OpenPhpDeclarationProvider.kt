@@ -15,6 +15,7 @@ import com.intellij.psi.PsiNameIdentifierOwner
 import dev.baselinehighlighter.php.PhpDeclarationProvider
 import dev.baselinehighlighter.php.PhpMethod
 import dev.baselinehighlighter.php.PhpType
+import dev.baselinehighlighter.php.PhpFunction
 import ru.openide.openphp.lang.psi.PhpFile
 import ru.openide.openphp.lang.psi.symbols.PhpDeclarations
 import ru.openide.openphp.lang.psi.symbols.valueOrNull
@@ -41,6 +42,14 @@ class OpenPhpDeclarationProvider : PhpDeclarationProvider {
         }
 
     override fun supports(file: PsiFile): Boolean = file is PhpFile
+    override fun functions(file: PsiFile): List<PhpFunction> =
+        PhpDeclarations.inFile(file, false).mapNotNull { element ->
+            val info = PhpDeclarations.functionOf(element).valueOrNull() ?: return@mapNotNull null
+            if (info.name.isEmpty()) return@mapNotNull null
+            val identifier = (element as? PsiNameIdentifierOwner)?.nameIdentifier ?: return@mapNotNull null
+            PhpFunction(info.fqn.trimStart('\\'), identifier)
+        }
+
     override fun declarations(file: PsiFile): List<PhpType> =
         PhpDeclarations.inFile(file, false).mapNotNull { element ->
             val type = element as? PsiNameIdentifierOwner ?: return@mapNotNull null

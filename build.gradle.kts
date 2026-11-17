@@ -114,6 +114,7 @@ tasks.test {
         if (phpBackend.get() == "none") {
             excludeTestsMatching("*.PhpatNavigationTest")
             excludeTestsMatching("*.BaselineIntegrationTest")
+            excludeTestsMatching("*.BaselineFunctionIntegrationTest")
             excludeTestsMatching("*.BaselineMcpToolsetTest")
         }
         else excludeTestsMatching("*.BaselineWithoutPhpTest")

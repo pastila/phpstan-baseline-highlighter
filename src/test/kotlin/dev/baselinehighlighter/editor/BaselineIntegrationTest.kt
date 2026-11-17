@@ -143,6 +143,166 @@ class BaselineIntegrationTest : BasePlatformTestCase() {
         assertEquals(2, markers.size)
     }
 
+    fun testBehaviorUnusedPublicAndIncompatibleReturnMethodsProduceOnlyOwnerGutters() {
+        val php = myFixture.addFileToProject("src/Service.php", """
+            <?php
+            namespace App;
+            class ParentService { public function other() {} }
+            class Service extends ParentService {
+                public function save() {}
+                public function other() {}
+            }
+        """.trimIndent()).virtualFile
+        val neon = myFixture.addFileToProject("config/baseline.neon", """
+            parameters:
+              ignoreErrors:
+                -
+                  message: '#^Public method "App\\Service\:\:save\(\)" is never used$#'
+                  identifier: public.method.unused
+                  path: ../src/Service.php
+                -
+                  message: '#^Return type \(void\) of method App\\Service\:\:other\(\) should be compatible with return type \(int\|null\) of method App\\ParentService\:\:other\(\)$#'
+                  identifier: method.childReturnType
+                  path: ../src/Service.php
+        """.trimIndent()).virtualFile
+        project.service<BaselineSettings>().replace(BaselineSettings.Data(sources = mutableListOf(BaselineSettings.Source(path = neon.path))))
+        project.service<BaselineIndexService>().reload()
+        awaitIndex { !it.isUpdating && it.entries(php.path).size == 2 }
+        myFixture.configureFromExistingVirtualFile(php)
+        val file = myFixture.file
+        val types = PhpDeclarationProvider.forFile(file)!!.declarations(file)
+        val bindings = PhpBaselineMatcher.bindings(file)
+        val service = types.single { BaselineMatcher.key(it.fqn) == "app\\service" }
+        val classEntries = bindings[PsiTreeUtil.getDeepestFirst(service.identifier).textOffset].orEmpty()
+        assertEquals(2, classEntries.size)
+        for (method in service.methods) {
+            val entries = bindings[PsiTreeUtil.getDeepestFirst(method.identifier).textOffset].orEmpty()
+            assertEquals(method.name, 1, entries.size)
+            val entry = entries.single()
+            assertEquals(method.name, entry.indexed.owner!!.methodName)
+            assertEquals(dev.baselinehighlighter.core.BindingNote.NONE, entry.note)
+        }
+        val parent = types.single { BaselineMatcher.key(it.fqn) == "app\\parentservice" }
+        assertNull(bindings[PsiTreeUtil.getDeepestFirst(parent.identifier).textOffset])
+        assertNull(bindings[PsiTreeUtil.getDeepestFirst(parent.methods.single().identifier).textOffset])
+        val markers = myFixture.findAllGutters().filter { it.tooltipText?.contains("PHPStan baseline") == true }
+        assertEquals(3, markers.size)
+    }
+
+    fun testBehaviorArchitectureRequirementsProduceOnlyTheOwnerClassGutter() {
+        val php = myFixture.addFileToProject("src/Service.php", "<?php namespace App; interface Contract {} class BaseService {} class Service { public function save() {} }").virtualFile
+        val requirements = listOf(
+            "not exist", "have only one public method", "be named matching the regex /.*Service$/",
+            "implement App\\Contract", "extend App\\BaseService",
+        )
+        val text = "parameters:\n  ignoreErrors:\n" + requirements.joinToString("") { requirement ->
+            val message = "rule: App\\Service should $requirement"
+            val pattern = "#^" + message.map { if (it.isLetterOrDigit() || it in " _-:") "$it" else "\\$it" }.joinToString("") + "$#"
+            "    -\n      message: '$pattern'\n      identifier: phpat.rule\n      path: ../src/Service.php\n"
+        }
+        val neon = myFixture.addFileToProject("config/baseline.neon", text).virtualFile
+        project.service<BaselineSettings>().replace(BaselineSettings.Data(sources = mutableListOf(BaselineSettings.Source(path = neon.path))))
+        project.service<BaselineIndexService>().reload()
+        awaitIndex { !it.isUpdating && it.entries(php.path).size == 5 }
+        myFixture.configureFromExistingVirtualFile(php)
+        val bindings = PhpBaselineMatcher.bindings(myFixture.file)
+        val owner = PhpDeclarationProvider.forFile(myFixture.file)!!.declarations(myFixture.file).single { BaselineMatcher.key(it.fqn) == "app\\service" }
+        val offset = PsiTreeUtil.getDeepestFirst(owner.identifier).textOffset
+        assertEquals(setOf(offset), bindings.keys)
+        val entries = bindings.getValue(offset)
+        assertEquals(5, entries.size)
+        assertTrue(entries.all { it.note == dev.baselinehighlighter.core.BindingNote.NONE && it.indexed.owner!!.methodName == null })
+        assertEquals(1, myFixture.findAllGutters().count { it.tooltipText?.contains("PHPStan baseline") == true })
+    }
+
+    fun testBehaviorPropertyAccessUsesFileFallbackAndNeverTheReferencedClass() {
+        val php = myFixture.addFileToProject("src/Service.php", "<?php namespace App; class Service { public function save() {} public \$own; }").virtualFile
+        val neon = myFixture.addFileToProject("config/baseline.neon", """
+            parameters:
+              ignoreErrors:
+                -
+                  message: '#^Property App\\Dependency\:\:\${'$'}value \(string\) in isset\(\) is not nullable\.$#'
+                  identifier: isset.property
+                  path: ../src/Service.php
+                -
+                  message: '#^Property App\\Service\:\:\${'$'}own has no type specified\.$#'
+                  identifier: missingType.property
+                  path: ../src/Service.php
+        """.trimIndent()).virtualFile
+        project.service<BaselineSettings>().replace(BaselineSettings.Data(sources = mutableListOf(BaselineSettings.Source(path = neon.path))))
+        project.service<BaselineIndexService>().reload()
+        awaitIndex { !it.isUpdating && it.entries(php.path).size == 2 }
+        myFixture.configureFromExistingVirtualFile(php)
+        val initial = PhpBaselineMatcher.bindings(myFixture.file)
+        assertEquals(1, initial.size)
+        assertEquals(setOf(dev.baselinehighlighter.core.BindingNote.NONE, dev.baselinehighlighter.core.BindingNote.FILE_ONLY), initial.values.single().map { it.note }.toSet())
+        val markers = myFixture.findAllGutters().filter { it.tooltipText?.contains("PHPStan baseline") == true }
+        assertEquals(1, markers.size)
+        assertTrue(markers.single().tooltipText!!.contains(dev.baselinehighlighter.BaselineBundle.message("binding.file_only")))
+        WriteCommandAction.runWriteCommandAction(project) { myFixture.editor.document.insertString(myFixture.editor.document.textLength, " class Dependency { public \$value; }") }
+        PsiDocumentManager.getInstance(project).commitAllDocuments()
+        val bindings = PhpBaselineMatcher.bindings(myFixture.file)
+        assertEquals(1, bindings.size)
+        val remaining = bindings.values.single().single()
+        assertEquals("App\\Service", remaining.indexed.owner!!.className)
+        assertEquals(dev.baselinehighlighter.core.BindingNote.NONE, remaining.note)
+    }
+
+    fun testBehaviorClassPhpDocAndGenericsProduceOnlyTheDeclaringClassGutter() {
+        val php = myFixture.addFileToProject("src/Service.php", "<?php namespace App; interface Contract {} class BaseService {} class Service { public function findBy() {} }").virtualFile
+        val messages = listOf(
+            "Class App\\Service implements generic interface App\\Contract but does not specify its types: T",
+            "Class App\\Service extends generic class App\\BaseService but does not specify its types: T",
+            "Class App\\Service has PHPDoc tag @method for method findBy() parameter #1 \$criteria with no value type specified in iterable type array.",
+            "Class App\\BaseService constructor invoked with 4 parameters, 3 required.",
+        )
+        val text = "parameters:\n  ignoreErrors:\n" + messages.joinToString("") { message ->
+            val pattern = "#^" + message.map { if (it.isLetterOrDigit() || it in " _-:") "$it" else "\\$it" }.joinToString("") + "$#"
+            "    -\n      message: '$pattern'\n      path: ../src/Service.php\n"
+        }
+        val neon = myFixture.addFileToProject("config/baseline.neon", text).virtualFile
+        project.service<BaselineSettings>().replace(BaselineSettings.Data(sources = mutableListOf(BaselineSettings.Source(path = neon.path))))
+        project.service<BaselineIndexService>().reload()
+        awaitIndex { !it.isUpdating && it.entries(php.path).size == 4 }
+        myFixture.configureFromExistingVirtualFile(php)
+        val owner = PhpDeclarationProvider.forFile(myFixture.file)!!.declarations(myFixture.file).single { BaselineMatcher.key(it.fqn) == "app\\service" }
+        val bindings = PhpBaselineMatcher.bindings(myFixture.file)
+        val offset = PsiTreeUtil.getDeepestFirst(owner.identifier).textOffset
+        assertEquals(setOf(offset), bindings.keys)
+        val entries = bindings.getValue(offset)
+        assertEquals(3, entries.size)
+        assertTrue(entries.all { it.note == dev.baselinehighlighter.core.BindingNote.NONE && it.indexed.owner!!.methodName == null })
+        assertEquals(1, myFixture.findAllGutters().count { it.tooltipText?.contains("PHPStan baseline") == true })
+    }
+
+    fun testBehaviorStartAnchoredLiteralCreatesOnlyTheOwnerGutter() {
+        val php = myFixture.addFileToProject("src/Service.php", "<?php namespace App; class Service { public function save() {} } class Dependency {} class Other {}").virtualFile
+        val neon = myFixture.addFileToProject("config/baseline.neon", """
+            parameters:
+              ignoreErrors:
+                -
+                  message: '#^rule\: App\\Service should not depend on App\\Dependency#'
+                  identifier: phpat.rule
+                  path: ../src/Service.php
+                -
+                  message: '#^rule\: App\\Other should not depend on App\\Dependency.*#'
+                  identifier: phpat.rule
+                  path: ../src/Service.php
+        """.trimIndent()).virtualFile
+        project.service<BaselineSettings>().replace(BaselineSettings.Data(sources = mutableListOf(BaselineSettings.Source(path = neon.path))))
+        project.service<BaselineIndexService>().reload()
+        awaitIndex { !it.isUpdating && it.entries(php.path).size == 2 }
+        myFixture.configureFromExistingVirtualFile(php)
+        val owner = PhpDeclarationProvider.forFile(myFixture.file)!!.declarations(myFixture.file).single { BaselineMatcher.key(it.fqn) == "app\\service" }
+        val bindings = PhpBaselineMatcher.bindings(myFixture.file)
+        val offset = PsiTreeUtil.getDeepestFirst(owner.identifier).textOffset
+        assertEquals(setOf(offset), bindings.keys)
+        val entry = bindings.getValue(offset).single()
+        assertEquals(dev.baselinehighlighter.core.BindingNote.NONE, entry.note)
+        assertEquals("App\\Service", entry.indexed.owner!!.className)
+        assertEquals(1, myFixture.findAllGutters().count { it.tooltipText?.contains("PHPStan baseline") == true })
+    }
+
     fun testSettingsPanelRendersAndCanBeReopened() {
         configure()
         val configurable = dev.baselinehighlighter.settings.BaselineSourcesConfigurable(project)

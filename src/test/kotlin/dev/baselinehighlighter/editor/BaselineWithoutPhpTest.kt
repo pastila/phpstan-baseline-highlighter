@@ -20,7 +20,7 @@ class BaselineWithoutPhpTest : BasePlatformTestCase() {
         for (id in listOf("com.jetbrains.php", "ru.openide.openphp")) {
             assertTrue(com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId(id))?.isEnabled != true)
         }
-        val source = myFixture.addFileToProject("baseline.neon", "parameters:\n  ignoreErrors:\n    -\n      message: '#^Message$#'\n      identifier: missingType.return\n      path: File.php\n")
+        val source = myFixture.addFileToProject("baseline.neon", "parameters:\n  ignoreErrors:\n    -\n      message: '#^Function example\\(\\) has no return type specified\\.$#'\n      identifier: missingType.return\n      path: File.php\n")
         project.service<BaselineSettings>().replace(BaselineSettings.Data(sources = mutableListOf(BaselineSettings.Source(path = source.virtualFile.path))))
         val service = project.service<BaselineIndexService>()
         service.reload()
@@ -32,12 +32,15 @@ class BaselineWithoutPhpTest : BasePlatformTestCase() {
         val result = query.find(filePath = service.snapshot.byFile.keys.single())
         assertEquals("ready", result.state)
         assertEquals(1, result.entries.size)
+        assertEquals("example", result.entries.single().functionName)
         assertEquals(1, query.find(identifier = "missingType.return").total)
-        try {
-            query.find(className = "Example")
-            fail("Symbol lookup should require a PHP adapter")
-        } catch (expected: IllegalArgumentException) {
-            assertTrue(expected.message!!.contains("PHP plugin"))
+        for (functionName in listOf(null, "example")) {
+            try {
+                query.find(className = if (functionName == null) "Example" else null, functionName = functionName)
+                fail("Symbol lookup should require a PHP adapter")
+            } catch (expected: IllegalArgumentException) {
+                assertEquals(dev.baselinehighlighter.BaselineBundle.message("query.symbol.php"), expected.message)
+            }
         }
         if (System.getProperty("baseline.mcpServerEnabled") == "false") {
             assertTrue(com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId("com.intellij.mcpServer"))?.isEnabled != true)

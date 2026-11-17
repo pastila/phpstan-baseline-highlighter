@@ -17,7 +17,13 @@ object BaselinePresentation {
         append("${escape(message("tooltip.unverified"))}<br>")
         for (bound in entries.take(5)) {
             val entry = bound.indexed.entry
-            append("<br><b>${escape(bound.indexed.owner?.methodName?.let { "$it()" } ?: message("tooltip.class.file"))}</b><br>")
+            val owner = bound.indexed.owner
+            val label = when {
+                owner?.functionName != null -> message("tooltip.function", owner.functionName)
+                owner?.methodName != null -> "${owner.methodName}()"
+                else -> message("tooltip.class.file")
+            }
+            append("<br><b>${escape(label)}</b><br>")
             append(escape(BaselineMessageClassifier.display(entry.message).take(500)))
             entry.identifier?.let { append("<br>identifier: ${escape(it)}") }
             val info = ErrorIdentifierDocumentation.lookup(entry.identifier)

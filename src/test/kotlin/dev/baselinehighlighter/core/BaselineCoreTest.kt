@@ -94,11 +94,74 @@ class BaselineCoreTest {
         assertEquals("#^Method A::save\\(\\) has .*|other message$#", BaselineMessageClassifier.display("#^Method A::save\\(\\) has .*|other message$#"))
     }
 
+    @Test fun `unused public methods identify the quoted declaration owner`() {
+        assertEquals(OwnerHint("App\\Service", "save"), BaselineMessageClassifier.owner(pattern("Public method \"App\\Service::save()\" is never used")))
+        assertEquals(OwnerHint("Пример\\Сервис", "__construct"), BaselineMessageClassifier.owner(pattern("Public method \"\\Пример\\Сервис::__construct()\" is never used.")))
+        assertNull(BaselineMessageClassifier.owner(pattern("Call to public method \"App\\Other::save()\" is not allowed.")))
+        assertNull(BaselineMessageClassifier.owner("#^Public method \"App\\\\Service::.*\" is never used$#"))
+    }
+
+    @Test fun `incompatible return types identify the child method instead of the parent`() {
+        assertEquals(OwnerHint("App\\Service", "execute"), BaselineMessageClassifier.owner(pattern(
+            "Return type (void) of method App\\Service::execute() should be compatible with return type (int|null) of method App\\ParentService::execute()"
+        )))
+        assertEquals(OwnerHint("App\\Service", "callback"), BaselineMessageClassifier.owner(pattern(
+            "Return type (Closure(int): (string|null)) of method \\App\\Service::callback() should be compatible with return type (callable(int): string) of method App\\ParentService::callback()"
+        )))
+        assertNull(BaselineMessageClassifier.owner(pattern(
+            "Return type (void) of function execute() should be compatible with return type (int|null) of method App\\ParentService::execute()"
+        )))
+        assertNull(BaselineMessageClassifier.owner("#^Return type \\(.*\\) of method App\\\\Service::execute\\(\\) should be compatible with return type \\(int\\) of method App\\\\ParentService::execute\\(\\)$#"))
+    }
+
     @Test fun `method matching is case insensitive and does not attach to another class`() {
         val entries = listOf(indexed("Method app\\service::SAVE() has no return type specified."), indexed("Method App\\Absent::run() has no return type specified."))
         val result = BaselineMatcher.bind(entries, listOf(Declaration("\\App\\Service", setOf("save")), Declaration("App\\Other", setOf("run"))))
         assertEquals(1, result.size)
         assertEquals(1, result.getValue("app\\service").methods.getValue("save").size)
+    }
+
+    @Test fun `architecture declaration rules identify the class before the requirement`() {
+        for (requirement in listOf(
+            "not exist",
+            "not exist.",
+            "have only one public method",
+            "have only one public method.",
+            "be named matching the regex /.*Service$/",
+            "implement App\\Contract",
+            "implement /^App\\Domain\\.*Interface$/",
+            "extend App\\BaseService",
+            "be named matching the regex /[/",
+        )) {
+            for (prefix in listOf("", "architectureRules.contextStructure: ")) {
+                assertEquals(requirement, OwnerHint("Пример\\Сервис"), BaselineMessageClassifier.owner(pattern("${prefix}\\Пример\\Сервис should $requirement")))
+            }
+        }
+    }
+
+    @Test fun `architecture requirements do not identify referenced classes or execute message patterns`() {
+        for (text in listOf(
+            "Dependency App\\Other of App\\Service should not exist",
+            "App\\Service should implement ",
+            "App\\Service should extend ",
+            "App\\Service should be named matching the regex ",
+            "App\\Service should not exist anymore",
+        )) assertNull(text, BaselineMessageClassifier.owner(pattern(text)))
+        assertNull(BaselineMessageClassifier.owner("#^rule: App\\\\Service should be named matching the regex /.*Service\\$/$#"))
+        val entries = listOf(
+            indexed("rule: App\\Service should implement App\\Contract"),
+            indexed("App\\Service should extend App\\BaseService"),
+            indexed("App\\Absent should implement App\\Contract"),
+        )
+        val bindings = BaselineMatcher.bind(entries, listOf(
+            Declaration("App\\Service", setOf("save")),
+            Declaration("App\\Contract", emptySet()),
+            Declaration("App\\BaseService", emptySet()),
+        ))
+        assertEquals(setOf("app\\service"), bindings.keys)
+        assertEquals(2, bindings.getValue("app\\service").entries.size)
+        assertTrue(bindings.getValue("app\\service").entries.all { it.note == BindingNote.NONE })
+        assertTrue(bindings.getValue("app\\service").methods.isEmpty())
     }
 
     @Test fun `unknown owner falls back only to sole class and missing method stays at class`() {
@@ -109,6 +172,135 @@ class BaselineCoreTest {
         val result = BaselineMatcher.bind(listOf(missing), listOf(Declaration("App\\Service", emptySet()))).getValue("app\\service")
         assertEquals(BindingNote.METHOD_MISSING, result.entries.single().note)
         assertTrue(result.methods.isEmpty())
+    }
+
+    @Test fun `property declaration diagnostics retain the declaring class`() {
+        for (detail in listOf(
+            "has no type specified.",
+            "type has no value type specified in iterable type array.",
+            "with generic class ArrayIterator does not specify its types: TKey, TValue",
+            "with generic interface IteratorAggregate does not specify its types: TKey, TValue",
+            "has unknown class App\\Other as its type.",
+            "is never read.",
+            "is never read, only written.",
+            "is never written, only read.",
+            "(array<string>|null) is never assigned null so it can be removed from the property type.",
+            "(Closure(int): string) does not accept default value of type false.",
+        )) assertEquals(detail, OwnerHint("Пример\\Сервис"), BaselineMessageClassifier.owner(pattern("Property \\Пример\\Сервис::\$value $detail")))
+    }
+
+    @Test fun `property access diagnostics never identify the referenced declaring class`() {
+        for (detail in listOf(
+            "(string) does not accept null.",
+            "(Closure(int): string) does not accept int.",
+            "(string) in isset() is not nullable.",
+            "in isset() is not nullable nor uninitialized.",
+            "(string) in empty() is not falsy.",
+            "(string) on left side of ?? is not nullable.",
+            "on left side of ?? is not nullable nor uninitialized.",
+            "has an unfamiliar diagnostic.",
+        )) {
+            val access = indexed("Property App\\Dependency::\$value $detail")
+            assertNull(detail, access.owner)
+            val single = BaselineMatcher.bind(listOf(access), listOf(Declaration("App\\Service", setOf("save"))))
+            assertEquals(detail, BindingNote.FILE_ONLY, single.getValue("app\\service").entries.single().note)
+            val multiple = BaselineMatcher.bind(listOf(access), listOf(Declaration("App\\Service", emptySet()), Declaration("App\\Dependency", emptySet())))
+            assertTrue(detail, multiple.isEmpty())
+            assertTrue(detail, BaselineMatcher.bind(listOf(access), emptyList()).isEmpty())
+        }
+    }
+
+    @Test fun `class generic and PHPDoc diagnostics identify the declaring class`() {
+        for (detail in listOf(
+            "implements generic interface App\\Contract but does not specify its types: TKey, TValue",
+            "extends generic class \\App\\BaseService but does not specify its types: T",
+            "has PHPDoc tag @method for method findBy() parameter #1 \$criteria with no value type specified in iterable type array.",
+            "has PHPDoc tag @property for property \$items with no value type specified in iterable type array.",
+            "has PHPDoc tag @template-covariant T with invalid bound type App\\Other.",
+        )) assertEquals(detail, OwnerHint("Пример\\Сервис"), BaselineMessageClassifier.owner(pattern("Class \\Пример\\Сервис $detail")))
+    }
+
+    @Test fun `class references and documented methods never become declaration owners`() {
+        for (text in listOf(
+            "Class App\\Other constructor invoked with 4 parameters, 3 required.",
+            "Class App\\Other not found.",
+            "Class App\\Other referenced with incorrect case: App\\OTHER.",
+            "Call to method App\\Other::findBy() with incompatible PHPDoc type.",
+            "Class App\\Service has PHPDoc tag @method ",
+            "Class App\\Service implements generic interface App\\Contract but does not specify its types: ",
+        )) assertNull(text, BaselineMessageClassifier.owner(pattern(text)))
+        assertNull(BaselineMessageClassifier.owner("#^Class App\\\\Service.* has PHPDoc tag @method for method findBy\\(\\)$#"))
+        val entries = listOf(
+            indexed("Class App\\Service has PHPDoc tag @method for method findBy() parameter #1 \$criteria with no value type specified in iterable type array."),
+            indexed("Class App\\Absent extends generic class App\\BaseService but does not specify its types: T"),
+        )
+        val bound = BaselineMatcher.bind(entries, listOf(Declaration("App\\Service", setOf("findBy")), Declaration("App\\BaseService", emptySet())))
+        assertEquals(setOf("app\\service"), bound.keys)
+        assertEquals(BindingNote.NONE, bound.getValue("app\\service").entries.single().note)
+        assertTrue(bound.getValue("app\\service").methods.isEmpty())
+    }
+
+    @Test fun `start anchored literal messages retain owners without an end anchor`() {
+        for ((message, expected) in listOf(
+            "Method App\\Service::save() has no return type specified." to OwnerHint("App\\Service", "save"),
+            "Public method \"App\\Service::save()\" is never used" to OwnerHint("App\\Service", "save"),
+            "Class \\Пример\\Сервис has PHPDoc tag @method for method findBy() with invalid return type." to OwnerHint("Пример\\Сервис"),
+            "Property App\\Service::\$value has no type specified." to OwnerHint("App\\Service"),
+            "rule: App\\Service should not depend on App\\Dependency" to OwnerHint("App\\Service"),
+            "rule: App\\Service should not exist" to OwnerHint("App\\Service"),
+        )) {
+            val startOnly = pattern(message).removeSuffix("$#") + "#"
+            assertEquals(message, expected, BaselineMessageClassifier.owner(startOnly))
+            assertEquals(message, BaselineMessageClassifier.display(startOnly))
+        }
+        val escaped = "Literal #, /, Unicode Ж and a final \$"
+        assertEquals(escaped, BaselineMessageClassifier.display(pattern(escaped).removeSuffix("$#") + "#"))
+        assertEquals(OwnerHint("App\\Service"), BaselineMessageClassifier.owner("~^rule: App\\\\Service should not depend on App\\\\Dependency~"))
+    }
+
+    @Test fun `missing end anchors never permit partial regex decoding or malformed delimiters`() {
+        val prefix = pattern("rule: App\\Service should not depend on App\\Dependency").removeSuffix("$#")
+        for (pattern in listOf(
+            "$prefix.*#", "$prefix|Other#", "$prefix(?:suffix)#", "$prefix[abc]#",
+            "$prefix+#", "$prefix?#", "$prefix{2}#", "${prefix}\\d#",
+            "$prefix#i", "$prefix#extra#", "${prefix}\\#", prefix,
+            ("$prefix#").removeRange(1, 2),
+        )) {
+            assertNull(pattern, BaselineMessageClassifier.owner(pattern))
+            assertEquals(pattern, BaselineMessageClassifier.display(pattern))
+        }
+    }
+
+    @Test fun `named function diagnostics identify functions instead of classes or methods`() {
+        for (detail in listOf(
+            "has parameter \$items with no type specified.",
+            "has parameter \$items with no value type specified in iterable type array.",
+            "has no return type specified.",
+            "has invalid return type App\\Other.",
+            "return type has no value type specified in iterable type array.",
+            "should return App\\Other but returns int.",
+        )) assertEquals(detail, OwnerHint(functionName = "Пример\\обработать"), BaselineMessageClassifier.owner(pattern("Function \\Пример\\обработать() $detail")))
+        val records = listOf(indexed("Function App\\run() has no return type specified."), indexed("Function run() has no return type specified."), indexed("Function App\\missing() has no return type specified."))
+        val bound = BaselineMatcher.bindFunctions(records, setOf("\\APP\\RUN", "run", "Other\\run"))
+        assertEquals(setOf("app\\run", "run"), bound.keys)
+        assertTrue(bound.values.all { it.size == 1 && it.single().note == BindingNote.NONE })
+        assertTrue(BaselineMatcher.bind(records, listOf(Declaration("App\\run", setOf("run")))).isEmpty())
+    }
+
+    @Test fun `function calls missing names and arbitrary regexes have no function owner`() {
+        for (text in listOf(
+            "Function App\\run not found.",
+            "Function App\\run() invoked with 3 parameters, 1 required.",
+            "Parameter #1 \$value of function App\\run expects string, int given.",
+            "Call to function App\\run() has no effect.",
+            "Anonymous function has no return type specified.",
+        )) {
+            val entry = indexed(text)
+            assertNull(text, entry.owner)
+            assertTrue(BaselineMatcher.bindFunctions(listOf(entry), setOf("App\\run")).isEmpty())
+        }
+        assertNull(BaselineMessageClassifier.owner("#^Function App\\\\run\\(\\) has .*$#"))
+        assertTrue(BaselineMatcher.bindFunctions(listOf(indexed("Function run() has no return type specified.")), setOf("App\\run")).isEmpty())
     }
 
     @Test fun `path normalization supports project relative paths and Windows drives`() {

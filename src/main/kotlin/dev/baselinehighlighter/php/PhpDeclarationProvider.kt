@@ -7,12 +7,14 @@ import com.intellij.openapi.project.Project
 
 data class PhpMethod(val name: String, val identifier: PsiElement)
 data class PhpType(val fqn: String, val identifier: PsiElement, val methods: List<PhpMethod>)
+data class PhpFunction(val fqn: String, val identifier: PsiElement)
 data class PhpatMethod(val name: String, val identifier: PsiElement, val collection: Boolean)
 
 /** Only optional integrations may depend on a PHP vendor's PSI classes. */
 interface PhpDeclarationProvider {
     fun supports(file: PsiFile): Boolean
     fun declarations(file: PsiFile): List<PhpType>
+    fun functions(file: PsiFile): List<PhpFunction> = emptyList()
     fun phpatMethods(project: Project, className: String): List<PhpatMethod> = emptyList()
 
     companion object {

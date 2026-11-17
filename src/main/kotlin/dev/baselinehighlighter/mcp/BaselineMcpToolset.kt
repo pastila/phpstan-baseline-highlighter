@@ -23,19 +23,20 @@ import kotlinx.serialization.json.*
 /** Loaded exclusively through the optional MCP Server descriptor. */
 class BaselineMcpToolset : McpToolset {
     @McpTool
-    @McpDescription("Find configured PHPStan baseline entries by PHP file, fully qualified class, method or exact error identifier. Filters combine with AND. Specify filePath, className or identifier; an identifier alone searches all configured sources. Symbol searches use gutter marker declaration bindings. Returns paginated JSON including entryId, baseline location, PHP target, error group, offline explanation and a documentation URL for known identifiers. If state is updating, retry after indexing finishes. A baseline entry does not prove a current code violation.")
+    @McpDescription("Find configured PHPStan baseline entries by PHP file, fully qualified class, method, named function or exact error identifier. Filters combine with AND. Specify filePath, className, functionName or identifier; an identifier alone searches all configured sources. functionName cannot be combined with className or methodName. Symbol searches use gutter marker declaration bindings. Returns paginated JSON including entryId, baseline location, PHP target, error group, offline explanation and a documentation URL for known identifiers. If state is updating, retry after indexing finishes. A baseline entry does not prove a current code violation.")
     suspend fun find_baseline_entries(
-        @McpDescription("Absolute PHP file path or a path relative to the project root. Specify filePath, className or identifier.") filePath: String? = null,
+        @McpDescription("Absolute PHP file path or a path relative to the project root. Specify filePath, className, functionName or identifier.") filePath: String? = null,
         @McpDescription("Fully qualified PHP class name, e.g. App\\Service. Leading backslash and case differences are accepted.") className: String? = null,
         @McpDescription("Exact PHP method name without parentheses; requires className. Omit to include all entries bound to the class.") methodName: String? = null,
         @McpDescription("Number of matching entries to skip, starting at zero.") offset: Int = 0,
         @McpDescription("Maximum entries to return, from 1 to 200.") limit: Int = 50,
         @McpDescription("Exact case-sensitive error identifier, e.g. missingType.iterableValue. May be used alone across all sources or combined with other filters.") identifier: String? = null,
+        @McpDescription("Fully qualified named PHP function without parentheses, e.g. App\\save. Leading backslash and case differences are accepted. Cannot be combined with className or methodName.") functionName: String? = null,
     ): McpToolCallResult {
         val project = currentCoroutineContext().project
         return checked {
             withContext(Dispatchers.EDT) { PsiDocumentManager.getInstance(project).commitAllDocuments() }
-            val result = withContext(Dispatchers.Default) { project.service<BaselineQueryService>().find(filePath, className, methodName, offset, limit, identifier) }
+            val result = withContext(Dispatchers.Default) { project.service<BaselineQueryService>().find(filePath, className, methodName, offset, limit, identifier, functionName) }
             jsonResult(buildJsonObject {
                 put("state", result.state)
                 put("total", result.total)
@@ -53,6 +54,7 @@ class BaselineMcpToolset : McpToolset {
                         put("targetFile", match.indexed.targetPath)
                         put("className", match.className?.let(::JsonPrimitive) ?: JsonNull)
                         put("methodName", match.methodName?.let(::JsonPrimitive) ?: JsonNull)
+                        put("functionName", match.functionName?.let(::JsonPrimitive) ?: JsonNull)
                         put("binding", match.binding)
                         put("message", BaselineMessageClassifier.display(entry.message))
                         put("messagePattern", entry.message)

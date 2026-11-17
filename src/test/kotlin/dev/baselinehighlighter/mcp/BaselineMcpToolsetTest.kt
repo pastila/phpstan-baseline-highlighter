@@ -26,17 +26,17 @@ class BaselineMcpToolsetTest : BasePlatformTestCase() {
         "Method App\\Service::gone() has no return type specified.",
     )
 
-    private fun baseline(): String = "parameters:\n  ignoreErrors:\n" + messages.joinToString("") { text ->
+    private fun baseline(entries: List<String> = messages): String = "parameters:\n  ignoreErrors:\n" + entries.joinToString("") { text ->
         val pattern = "#^" + text.map { if (it.isLetterOrDigit() || it in " _-:") "$it" else "\\$it" }.joinToString("") + "$#"
         "    -\n      message: '$pattern'\n      identifier: test.identifier\n      count: 1\n      path: ../src/Service.php\n"
     }
 
-    private fun configure(): Pair<com.intellij.openapi.vfs.VirtualFile, com.intellij.openapi.vfs.VirtualFile> {
-        val php = myFixture.addFileToProject("src/Service.php", "<?php namespace App; class Service { public function save() {} }").virtualFile
-        val neon = myFixture.addFileToProject("config/baseline.neon", baseline()).virtualFile
+    private fun configure(entries: List<String> = messages, phpText: String = "<?php namespace App; class Service { public function save() {} }"): Pair<com.intellij.openapi.vfs.VirtualFile, com.intellij.openapi.vfs.VirtualFile> {
+        val php = myFixture.addFileToProject("src/Service.php", phpText).virtualFile
+        val neon = myFixture.addFileToProject("config/baseline.neon", baseline(entries)).virtualFile
         project.service<BaselineSettings>().replace(BaselineSettings.Data(sources = mutableListOf(BaselineSettings.Source(path = neon.path))))
         project.service<BaselineIndexService>().reload()
-        awaitIndex { !it.isUpdating && it.entries(php.path).size == 4 }
+        awaitIndex { !it.isUpdating && it.entries(php.path).size == entries.size }
         return php to neon
     }
 
@@ -141,6 +141,161 @@ class BaselineMcpToolsetTest : BasePlatformTestCase() {
         assertEquals(5, allSources["total"]!!.jsonPrimitive.int)
         val type = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service"); put("identifier", "missingType.iterableValue") }))
         assertEquals(1, type["total"]!!.jsonPrimitive.int)
+    }
+
+    fun testBehaviorUnusedPublicAndIncompatibleReturnMethodsAreFoundOnlyOnTheirOwner() {
+        configure(listOf(
+            "Public method \"App\\Service::save()\" is never used",
+            "Return type (void) of method App\\Service::other() should be compatible with return type (int|null) of method App\\ParentService::other()",
+        ), "<?php namespace App; class ParentService { public function other() {} } class Service extends ParentService { public function save() {} public function other() {} }")
+        for (name in listOf("save", "other")) {
+            val result = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service"); put("methodName", name) }))
+            assertEquals(1, result["total"]!!.jsonPrimitive.int)
+            val entry = result["entries"]!!.jsonArray.single().jsonObject
+            assertEquals("App\\Service", entry["className"]!!.jsonPrimitive.content.trimStart('\\'))
+            assertEquals(name, entry["methodName"]!!.jsonPrimitive.content)
+            assertEquals("none", entry["binding"]!!.jsonPrimitive.content)
+        }
+        val parent = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\ParentService"); put("methodName", "other") }))
+        assertEquals(0, parent["total"]!!.jsonPrimitive.int)
+    }
+
+    fun testBehaviorArchitectureRequirementsAreFoundOnTheOwnerInsteadOfRequiredTypes() {
+        configure(listOf(
+            "rule: App\\Service should not exist",
+            "App\\Service should have only one public method",
+            "rule: App\\Service should be named matching the regex /.*Service$/",
+            "App\\Service should implement App\\Contract",
+            "rule: App\\Service should extend App\\BaseService",
+        ), "<?php namespace App; interface Contract {} class BaseService {} class Service { public function save() {} }")
+        val result = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service") }))
+        assertEquals(5, result["total"]!!.jsonPrimitive.int)
+        for (entry in result["entries"]!!.jsonArray.map { it.jsonObject }) {
+            assertEquals("none", entry["binding"]!!.jsonPrimitive.content)
+            assertEquals(JsonNull, entry["methodName"])
+        }
+        for (name in listOf("App\\Contract", "App\\BaseService")) {
+            assertEquals(0, json(call("find_baseline_entries", buildJsonObject { put("className", name) }))["total"]!!.jsonPrimitive.int)
+        }
+        val method = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service"); put("methodName", "save") }))
+        assertEquals(0, method["total"]!!.jsonPrimitive.int)
+    }
+
+    fun testBehaviorPropertyAccessHasNoOwnerHintAndOnlyUnambiguousFileFallback() {
+        val (php, _) = configure(listOf(
+            "Property App\\Dependency::\$value (string) on left side of ?? is not nullable.",
+            "Property App\\Service::\$own has no type specified.",
+        ), "<?php namespace App; class Service { public function save() {} public \$own; }")
+        val file = json(call("find_baseline_entries", buildJsonObject { put("filePath", php.path) }))
+        val access = file["entries"]!!.jsonArray.map { it.jsonObject }.single { it["message"]!!.jsonPrimitive.content.contains("Dependency") }
+        assertEquals(JsonNull, access["className"])
+        assertEquals(JsonNull, access["methodName"])
+        val single = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service") }))
+        assertEquals(2, single["total"]!!.jsonPrimitive.int)
+        assertEquals(setOf("none", "file_only"), single["entries"]!!.jsonArray.map { it.jsonObject["binding"]!!.jsonPrimitive.content }.toSet())
+        myFixture.configureFromExistingVirtualFile(php)
+        WriteCommandAction.runWriteCommandAction(project) { myFixture.editor.document.insertString(myFixture.editor.document.textLength, " class Dependency { public \$value; }") }
+        val owner = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service") }))
+        assertEquals(1, owner["total"]!!.jsonPrimitive.int)
+        val referenced = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Dependency") }))
+        assertEquals(0, referenced["total"]!!.jsonPrimitive.int)
+        assertEquals(2, json(call("find_baseline_entries", buildJsonObject { put("filePath", php.path) }))["total"]!!.jsonPrimitive.int)
+    }
+
+    fun testBehaviorClassPhpDocAndGenericsAreFoundWithoutReferencedTypeOrMethodOwners() {
+        val (php, _) = configure(listOf(
+            "Class App\\Service implements generic interface App\\Contract but does not specify its types: T",
+            "Class App\\Service extends generic class App\\BaseService but does not specify its types: T",
+            "Class App\\Service has PHPDoc tag @method for method findBy() parameter #1 \$criteria with no value type specified in iterable type array.",
+            "Class App\\BaseService constructor invoked with 4 parameters, 3 required.",
+        ), "<?php namespace App; interface Contract {} class BaseService {} class Service { public function findBy() {} }")
+        val owner = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service") }))
+        assertEquals(3, owner["total"]!!.jsonPrimitive.int)
+        for (entry in owner["entries"]!!.jsonArray.map { it.jsonObject }) {
+            assertEquals("none", entry["binding"]!!.jsonPrimitive.content)
+            assertEquals(JsonNull, entry["methodName"])
+        }
+        for (name in listOf("App\\Contract", "App\\BaseService")) {
+            assertEquals(0, json(call("find_baseline_entries", buildJsonObject { put("className", name) }))["total"]!!.jsonPrimitive.int)
+        }
+        val method = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service"); put("methodName", "findBy") }))
+        assertEquals(0, method["total"]!!.jsonPrimitive.int)
+        assertEquals(4, json(call("find_baseline_entries", buildJsonObject { put("filePath", php.path) }))["total"]!!.jsonPrimitive.int)
+    }
+
+    fun testBehaviorStartAnchoredLiteralsAreSearchableWithoutAcceptingRegexSuffixes() {
+        val (php, neon) = configure(listOf("rule: App\\Service should not depend on App\\Dependency"),
+            "<?php namespace App; class Service { public function save() {} } class Dependency {} class Other {}")
+        val document = FileDocumentManager.getInstance().getDocument(neon)!!
+        WriteCommandAction.runWriteCommandAction(project) { document.setText("""
+            parameters:
+              ignoreErrors:
+                -
+                  message: '#^rule\: App\\Service should not depend on App\\Dependency#'
+                  identifier: phpat.rule
+                  path: ../src/Service.php
+                -
+                  message: '#^rule\: App\\Other should not depend on App\\Dependency.*#'
+                  identifier: phpat.rule
+                  path: ../src/Service.php
+        """.trimIndent()) }
+        awaitIndex { !it.isUpdating && it.entries(php.path).size == 2 }
+        val owner = json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service") }))
+        assertEquals(1, owner["total"]!!.jsonPrimitive.int)
+        val entry = owner["entries"]!!.jsonArray.single().jsonObject
+        assertEquals("none", entry["binding"]!!.jsonPrimitive.content)
+        assertEquals("rule: App\\Service should not depend on App\\Dependency", entry["message"]!!.jsonPrimitive.content)
+        assertTrue(entry["messagePattern"]!!.jsonPrimitive.content.endsWith("Dependency#"))
+        for (name in listOf("App\\Dependency", "App\\Other")) {
+            assertEquals(0, json(call("find_baseline_entries", buildJsonObject { put("className", name) }))["total"]!!.jsonPrimitive.int)
+        }
+        val file = json(call("find_baseline_entries", buildJsonObject { put("filePath", php.path) }))
+        assertEquals(2, file["total"]!!.jsonPrimitive.int)
+        val regex = file["entries"]!!.jsonArray.map { it.jsonObject }.single { it["messagePattern"]!!.jsonPrimitive.content.contains(".*") }
+        assertEquals(JsonNull, regex["className"])
+        assertEquals(regex["messagePattern"], regex["message"])
+    }
+
+    fun testBehaviorFunctionSearchUsesFullyQualifiedNamesFiltersAndPagination() {
+        val (php, _) = configure(listOf(
+            "Function App\\run() has no return type specified.",
+            "Function App\\run() has parameter \$items with no type specified.",
+            "Function Other\\run() has no return type specified.",
+            "Function App\\missing() has no return type specified.",
+        ), "<?php namespace App; function run() {} class Service { public function run() {} } namespace Other; function run() {}")
+        val first = json(call("find_baseline_entries", buildJsonObject { put("functionName", "\\APP\\RUN"); put("filePath", php.path); put("identifier", "test.identifier"); put("limit", 1) }))
+        assertEquals(2, first["total"]!!.jsonPrimitive.int)
+        assertTrue(first["hasMore"]!!.jsonPrimitive.boolean)
+        val entry = first["entries"]!!.jsonArray.single().jsonObject
+        assertEquals("App\\run", entry["functionName"]!!.jsonPrimitive.content)
+        assertEquals(JsonNull, entry["className"])
+        assertEquals(JsonNull, entry["methodName"])
+        assertEquals("none", entry["binding"]!!.jsonPrimitive.content)
+        val second = json(call("find_baseline_entries", buildJsonObject { put("functionName", "App\\run"); put("offset", 1); put("limit", 1) }))
+        assertEquals(2, second["total"]!!.jsonPrimitive.int)
+        assertEquals(1, second["entries"]!!.jsonArray.size)
+        assertFalse(second["hasMore"]!!.jsonPrimitive.boolean)
+        assertEquals(1, json(call("find_baseline_entries", buildJsonObject { put("functionName", "Other\\RUN") }))["total"]!!.jsonPrimitive.int)
+        for (name in listOf("run", "App\\missing")) assertEquals(0, json(call("find_baseline_entries", buildJsonObject { put("functionName", name) }))["total"]!!.jsonPrimitive.int)
+        assertEquals(0, json(call("find_baseline_entries", buildJsonObject { put("functionName", "App\\run"); put("identifier", "missingType.return") }))["total"]!!.jsonPrimitive.int)
+        assertEquals(0, json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service"); put("methodName", "run") }))["total"]!!.jsonPrimitive.int)
+        val file = json(call("find_baseline_entries", buildJsonObject { put("filePath", php.path) }))
+        assertEquals(4, file["total"]!!.jsonPrimitive.int)
+        assertTrue(file["entries"]!!.jsonArray.any { it.jsonObject["functionName"]?.jsonPrimitive?.content == "App\\missing" })
+    }
+
+    fun testBehaviorFunctionSearchRejectsMixedSelectorsAndTracksUnsavedRename() {
+        val (php, _) = configure(listOf("Function App\\run() has no return type specified."), "<?php namespace App; function run() {} class Service { public function run() {} }")
+        assertEquals(1, json(call("find_baseline_entries", buildJsonObject { put("functionName", "App\\run") }))["total"]!!.jsonPrimitive.int)
+        assertTrue(call("find_baseline_entries", buildJsonObject { put("functionName", " ") }).isError)
+        assertTrue(call("find_baseline_entries", buildJsonObject { put("functionName", "\\") }).isError)
+        assertTrue(call("find_baseline_entries", buildJsonObject { put("functionName", "App\\run"); put("className", "App\\Service") }).isError)
+        assertTrue(call("find_baseline_entries", buildJsonObject { put("functionName", "App\\run"); put("methodName", "run") }).isError)
+        myFixture.configureFromExistingVirtualFile(php)
+        WriteCommandAction.runWriteCommandAction(project) { myFixture.editor.document.setText("<?php namespace App; function renamed() {} class Service { public function run() {} }") }
+        assertEquals(0, json(call("find_baseline_entries", buildJsonObject { put("functionName", "App\\run") }))["total"]!!.jsonPrimitive.int)
+        assertEquals(0, json(call("find_baseline_entries", buildJsonObject { put("className", "App\\Service") }))["total"]!!.jsonPrimitive.int)
+        assertEquals(1, json(call("find_baseline_entries", buildJsonObject { put("filePath", php.path) }))["total"]!!.jsonPrimitive.int)
     }
 
     fun testNavigationRechecksUnsavedOffsetsAndRejectsChangedEntries() {

@@ -8,9 +8,12 @@ import dev.baselinehighlighter.phpat.PhpatRuleNames
 import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.php.lang.psi.PhpFile
 import com.jetbrains.php.lang.psi.elements.PhpClass
+import com.jetbrains.php.lang.psi.elements.Function as PhpPsiFunction
+import com.jetbrains.php.lang.psi.elements.Method
 import dev.baselinehighlighter.php.PhpDeclarationProvider
 import dev.baselinehighlighter.php.PhpMethod
 import dev.baselinehighlighter.php.PhpType
+import dev.baselinehighlighter.php.PhpFunction
 
 class JetBrainsPhpDeclarationProvider : PhpDeclarationProvider {
     override fun phpatMethods(project: Project, className: String): List<PhpatMethod> =
@@ -23,6 +26,13 @@ class JetBrainsPhpDeclarationProvider : PhpDeclarationProvider {
         }
 
     override fun supports(file: PsiFile): Boolean = file is PhpFile
+    override fun functions(file: PsiFile): List<PhpFunction> =
+        PsiTreeUtil.findChildrenOfType(file, PhpPsiFunction::class.java).mapNotNull { function ->
+            if (function is Method || function.isClosure || function.name.isEmpty()) return@mapNotNull null
+            val identifier = function.nameIdentifier ?: return@mapNotNull null
+            PhpFunction(function.fqn.trimStart('\\'), identifier)
+        }
+
     override fun declarations(file: PsiFile): List<PhpType> =
         PsiTreeUtil.findChildrenOfType(file, PhpClass::class.java).mapNotNull { type ->
             if (type.isAnonymous || type.name.isEmpty()) return@mapNotNull null

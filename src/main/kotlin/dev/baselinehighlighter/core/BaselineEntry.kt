@@ -13,7 +13,12 @@ data class BaselineEntry(
 )
 data class ParseIssue(val line: Int, val message: String)
 data class ParseResult(val entries: List<BaselineEntry>, val issues: List<ParseIssue>)
-data class OwnerHint(val className: String, val methodName: String? = null)
+data class OwnerHint(val className: String? = null, val methodName: String? = null, val functionName: String? = null) {
+    init {
+        require((className == null) != (functionName == null))
+        require(methodName == null || className != null)
+    }
+}
 data class IndexedEntry(
     val sourcePath: String,
     val targetPath: String,
