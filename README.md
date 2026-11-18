@@ -2,13 +2,15 @@
 
 Плагин для IDE на IntelliJ Platform показывает записи PHPStan baseline возле объявлений классов, методов и именованных функций: значок в гутере, подсказка и переход к записи в NEON. Работает без запуска PHPStan, PHP CLI, Docker и других внешних процессов.
 
-PHP-поддержка подключается опциональными адаптерами: **JetBrains PHP** (`com.jetbrains.php`) и **PHP for OpenIDE** (`ru.openide.openphp`, в том числе в Ракете). Общая часть не использует API конкретного PHP-плагина. Без обоих адаптеров доступны индекс, настройки и список записей файла; для маркеров объявлений нужен один из поддерживаемых PHP-плагинов.
+PHP-поддержка подключается опциональными адаптерами для **JetBrains PHP** (`com.jetbrains.php`), **PHP for OpenIDE** (`ru.openide.openphp`) и **Raketa PHP** (`ru.raketa.php`). Без PHP-плагина доступны индекс, настройки и список записей файла. Для маркеров объявлений и поиска по PHP-символам нужен один из поддерживаемых PHP-плагинов.
+
+В Raketa PHP маркеры используют объявления, которые распознаёт его парсер. В текущем парсере 262 это классы, интерфейсы, трейты, перечисления, методы и именованные функции на уровне файла или пространства имён.
 
 Baseline фиксирует исключения, поэтому маркер **не подтверждает наличие нарушения в текущем коде**. Плагин не изменяет baseline и не подсвечивает точные строки ошибок.
 
 ## Установка и настройка
 
-1. Скачайте ZIP из [последнего релиза](https://github.com/pastila/phpstan-baseline-highlighter/releases/latest) или соберите `build/distributions/phpstan-baseline-highlighter-0.1.16.zip` из текущего кода.
+1. Скачайте ZIP из [последнего релиза](https://github.com/pastila/phpstan-baseline-highlighter/releases/latest) или соберите `build/distributions/phpstan-baseline-highlighter-0.1.17.zip` из текущего кода.
 2. Откройте **Settings → Plugins → ⚙ → Install Plugin from Disk** и выберите ZIP целиком.
 3. В проекте откройте **Settings → Languages & Frameworks → PHPStan Baseline Highlighter**.
 4. Выберите или создайте профиль. Нажмите **Import from PHPStan config…** и выберите `.neon` или `.neon.dist` нужной конфигурации либо добавьте baseline кнопкой **+**. Проверьте строки в таблице и нажмите **Apply**.
@@ -199,7 +201,7 @@ parameters:
 
 ### Проверка альтернативного PHP-плагина
 
-`phpBackend` выбирает тестовое окружение: `jetbrains` (по умолчанию), `openphp` или `none`. Каждый выпускаемый ZIP содержит оба опциональных адаптера независимо от выбранного режима тестов.
+`phpBackend` выбирает тестовое окружение: `jetbrains` (по умолчанию), `openphp`, `raketa` или `none`. Каждый выпускаемый ZIP содержит все три адаптера независимо от выбранного режима тестов.
 
 ```bash
 ./gradlew test -PlocalIdePath=/path/to/compatible/IDE \
@@ -207,7 +209,7 @@ parameters:
   -PjetBrainsPhpPluginPath=/path/to/JetBrainsPHP
 ```
 
-В этом режиме JetBrains PHP нужен только как SDK для компиляции второго адаптера; в тестовую IDE он не устанавливается. Для режима `none` задайте те же пути SDK, `-PphpBackend=none` и обычную IDE: отдельный тест проверяет загрузку и чтение baseline при отсутствии обоих PHP-плагинов.
+В режимах `openphp` и `raketa` путь `jetBrainsPhpPluginPath` нужен для компиляции адаптеров. Для режима `none` задайте пути SDK, `-PphpBackend=none` и IDE без PHP-плагинов. В этом режиме отдельный тест проверяет загрузку и чтение baseline.
 
 Gradle-плагин JetBrains не узнаёт код продукта `RK`. Для тестов на установленной Ракете есть вспомогательный скрипт:
 
@@ -221,6 +223,17 @@ python3 tools/prepare-local-sdk.py /path/to/Raketa .intellijPlatform/local-sdk
 
 Скрипт создаёт локальное представление SDK с симлинками и совместимыми для структурного анализатора Gradle метаданными. Установленная Ракета не изменяется. Версию test framework нужно выбирать под конкретную сборку платформы; указанная версия использована с Raketa 2026.2.4 / 262.11879.SNAPSHOT. Для неё Gradle запускается на JDK 25.
 
+Чтобы проверить Raketa PHP, запустите тесты на том же SDK с `-PphpBackend=raketa`. Если Raketa PHP установлен отдельно, передайте путь к его каталогу с `lib/*.jar`:
+
+```bash
+./gradlew test -PlocalIdePath="$PWD/.intellijPlatform/local-sdk" \
+  -PphpBackend=raketa -PraketaPhpPluginPath=/path/to/raketa-php \
+  -PjetBrainsPhpPluginPath=/path/to/JetBrainsPHP \
+  -PtestFrameworkVersion=262.11879.100
+```
+
+Для проверки сборки из исходников `raketa-storm` соберите `./bazel.cmd build //raketa/php` в том репозитории и поместите `out/bazel-bin/raketa/php/php.jar` в каталог `lib` тестового плагина. При использовании SDK со встроенным Raketa PHP пропустите `raketaPhpPluginPath`.
+
 ### Проверки
 
 ```bash
@@ -230,7 +243,7 @@ python3 tools/prepare-local-sdk.py /path/to/Raketa .intellijPlatform/local-sdk
 ./gradlew benchmarkBaselines -PbaselineDirectory=/path/to/directory/with/baselines
 ```
 
-`test` проверяет парсер, владельцев сообщений, пути, PHP PSI, обновление индекса и переходы в изолированной IDE. Отчёты разделены по режимам: `build/reports/tests/jetbrains/index.html`, `openphp/index.html` и `none/index.html`. Benchmark читает файлы и измеряет JVM-ядро; он не запускает анализатор и не является замером памяти всего IDE-процесса. Для benchmark выбирайте каталог baseline без больших деревьев зависимостей.
+`test` проверяет парсер, владельцев сообщений, пути, PHP PSI, обновление индекса и переходы в изолированной IDE. Для каждого режима отчёт доступен в `build/reports/tests/<backend>/index.html`. Benchmark читает файлы и измеряет JVM-ядро; он не запускает анализатор и не является замером памяти всего IDE-процесса. Для benchmark выбирайте каталог baseline без больших деревьев зависимостей.
 
 MCP Server берётся из SDK сборки; при необходимости задайте `-PmcpServerPluginPath=/path/to/mcpserver`. Для проверки без MCP Server используйте `-PmcpServerEnabled=false` вместе с этим путём: API останется только в compile classpath, сервер не устанавливается в тестовую IDE. В этом режиме исключаются MCP-тесты, остальные выполняются как обычно. Для полной проверки без PHP-адаптеров дополнительно задайте режим `none` и пути SDK PHP-плагинов, описанные выше.
 

@@ -67,8 +67,11 @@ class BaselineFunctionIntegrationTest : BasePlatformTestCase() {
             namespace { function globalRun() {} }
         """.trimIndent())
         val functions = PhpDeclarationProvider.forFile(file)!!.functions(file)
-        assertEquals(setOf("app\\run", "app\\conditional", "app\\outer", "app\\inner", "other\\run", "globalrun"), functions.map { BaselineMatcher.key(it.fqn) }.toSet())
-        assertEquals(6, functions.size)
+        val expected = mutableSetOf("app\\run", "app\\outer", "other\\run", "globalrun")
+        // Raketa PHP 262 does not emit function declaration nodes from statement blocks.
+        if (System.getProperty("baseline.phpBackend") != "raketa") expected += setOf("app\\conditional", "app\\inner")
+        assertEquals(expected, functions.map { BaselineMatcher.key(it.fqn) }.toSet())
+        assertEquals(expected.size, functions.size)
         assertTrue(functions.all { it.identifier.text.isNotBlank() })
     }
 

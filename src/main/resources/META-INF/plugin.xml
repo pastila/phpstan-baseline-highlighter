@@ -9,6 +9,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends optional="true" config-file="dev.baselinehighlighter-jetbrains.xml">com.jetbrains.php</depends>
     <depends optional="true" config-file="dev.baselinehighlighter-openphp.xml">ru.openide.openphp</depends>
+    <depends optional="true" config-file="dev.baselinehighlighter-raketa.xml">ru.raketa.php</depends>
     <depends optional="true" config-file="dev.baselinehighlighter-mcp.xml">com.intellij.mcpServer</depends>
     <extensionPoints>
         <extensionPoint name="phpDeclarationProvider" interface="dev.baselinehighlighter.php.PhpDeclarationProvider" dynamic="true"/>

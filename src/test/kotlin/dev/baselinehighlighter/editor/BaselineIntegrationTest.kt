@@ -331,9 +331,12 @@ class BaselineIntegrationTest : BasePlatformTestCase() {
         val backend = System.getProperty("baseline.phpBackend")
         val provider = PhpDeclarationProvider.forFile(file)!!
         assertEquals(1, PhpDeclarationProvider.EP.extensionList.size)
-        assertTrue(provider.javaClass.name.contains(if (backend == "openphp") ".openphp." else ".jetbrains."))
-        val missing = if (backend == "openphp") "com.jetbrains.php" else "ru.openide.openphp"
-        assertTrue(com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId(missing))?.isEnabled != true)
+        val plugins = mapOf("jetbrains" to "com.jetbrains.php", "openphp" to "ru.openide.openphp", "raketa" to "ru.raketa.php")
+        assertTrue(provider.javaClass.name.startsWith("dev.baselinehighlighter.php.$backend."))
+        for ((name, id) in plugins) {
+            val plugin = com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId(id))
+            assertEquals(id, name == backend, plugin?.isEnabled == true)
+        }
     }
 
     fun testBehaviorProfileSwitchInvalidatesCachedBindingsBeforePublishingTheNewIndex() {

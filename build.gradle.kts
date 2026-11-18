@@ -19,6 +19,7 @@ repositories {
 
 val phpBackend = providers.gradleProperty("phpBackend").orElse("jetbrains")
 val openPhpPluginPath = providers.gradleProperty("openPhpPluginPath")
+val raketaPhpPluginPath = providers.gradleProperty("raketaPhpPluginPath")
 val mcpServerPluginPath = providers.gradleProperty("mcpServerPluginPath")
 val mcpServerEnabled = providers.gradleProperty("mcpServerEnabled").map(String::toBoolean).orElse(true)
 val openPhpSdkZip = layout.projectDirectory.file(".intellijPlatform/sdk/php-for-openide-0.9.9.zip")
@@ -70,6 +71,10 @@ dependencies {
             localPlugin(openPhpPluginPath.get())
             bundledPlugin("org.jetbrains.plugins.yaml")
             bundledPlugins("intellij.libraries.misc.plugin", "intellij.testRunner.plugin", "intellij.structureView.plugin", "intellij.bookmarks.plugin")
+        } else if (phpBackend.get() == "raketa") {
+            if (raketaPhpPluginPath.isPresent) testLocalPlugin(raketaPhpPluginPath.get())
+            else testBundledPlugin("ru.raketa.php")
+            testBundledPlugin("intellij.testRunner.plugin")
         }
         if (providers.gradleProperty("platformType").get() == "IU" && localPath == null) bundledModules("com.intellij.modules.ultimate")
         bundledPlugin("com.intellij.modules.json")
