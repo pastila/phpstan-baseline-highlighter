@@ -12,6 +12,7 @@ import dev.baselinehighlighter.core.BaselineMessageClassifier
 import dev.baselinehighlighter.documentation.ErrorIdentifierDocumentation
 import dev.baselinehighlighter.editor.BaselineNavigation
 import dev.baselinehighlighter.index.BaselineIndexService
+import dev.baselinehighlighter.index.IndexSnapshot
 import dev.baselinehighlighter.php.PhpDeclarationProvider
 import dev.baselinehighlighter.query.BaselineQueryService
 import dev.baselinehighlighter.settings.BaselineSettings
@@ -116,14 +117,17 @@ class BaselineMcpToolset : McpToolset {
         val index = project.service<BaselineIndexService>()
         index.start()
         val settings = project.service<BaselineSettings>().state
-        val snapshot = index.snapshot
+        val snapshot = index.snapshot.takeIf { it.settings === settings } ?: IndexSnapshot()
+        val updating = index.isUpdating || snapshot.settings !== settings || project.service<BaselineSettings>().state !== settings
         return jsonResult(buildJsonObject {
             put("enabled", settings.enabled)
-            put("state", if (!settings.enabled) "disabled" else if (index.isUpdating) "updating" else "ready")
+            put("activeProfileId", settings.activeProfile()?.id)
+            put("activeProfileName", settings.activeProfile()?.name)
+            put("state", if (!settings.enabled) "disabled" else if (updating) "updating" else "ready")
             put("phpSupportAvailable", PhpDeclarationProvider.EP.extensionList.isNotEmpty())
             put("entryCount", if (settings.enabled) snapshot.byFile.values.sumOf { it.size } else 0)
             putJsonArray("sources") {
-                for (source in settings.sources) add(buildJsonObject {
+                for (source in settings.activeSources()) add(buildJsonObject {
                     val path = index.normalize(source.path)
                     val status = snapshot.sources[path]
                     put("path", path)
@@ -131,7 +135,7 @@ class BaselineMcpToolset : McpToolset {
                     put("enabled", source.enabled)
                     put("state", when {
                         !settings.enabled || !source.enabled -> "disabled"
-                        index.isUpdating -> "updating"
+                        updating -> "updating"
                         status == null -> "not_indexed"
                         status.unavailable -> "unavailable"
                         status.issues.isNotEmpty() -> "invalid"

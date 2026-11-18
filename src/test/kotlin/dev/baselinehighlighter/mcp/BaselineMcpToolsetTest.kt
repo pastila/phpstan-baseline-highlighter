@@ -134,7 +134,9 @@ class BaselineMcpToolsetTest : BasePlatformTestCase() {
         myFixture.addFileToProject("src/Other.php", "<?php namespace App; class Other {}")
         val second = myFixture.addFileToProject("config/other.neon", baseline().replace("../src/Service.php", "../src/Other.php").replace("test.identifier", "missingType.iterableValue")).virtualFile
         val settings = project.service<BaselineSettings>()
-        settings.replace(settings.state.copy(sources = (settings.state.sources + BaselineSettings.Source(path = second.path)).toMutableList()))
+        settings.replace(settings.state.copy(profiles = settings.state.profiles.map { profile ->
+            profile.deepCopy().also { it.sources += BaselineSettings.Source(path = second.path) }
+        }.toMutableList()))
         project.service<BaselineIndexService>().reload()
         awaitIndex { !it.isUpdating && it.snapshot.sources.size == 2 }
         val allSources = json(call("find_baseline_entries", buildJsonObject { put("identifier", "missingType.iterableValue") }))
@@ -324,11 +326,41 @@ class BaselineMcpToolsetTest : BasePlatformTestCase() {
         assertEquals(3, type["total"]!!.jsonPrimitive.int) // Unknown owner no longer falls back in a multi-class file.
     }
 
+    fun testBehaviorStatusAndSearchUseOnlyTheActiveProfileAndOldIdsCannotOpen() {
+        val (php, first) = configure()
+        val second = myFixture.addFileToProject("config/ci.neon", baseline()).virtualFile
+        val before = json(call("find_baseline_entries", buildJsonObject { put("filePath", php.path) }))
+        val oldId = before["entries"]!!.jsonArray.first().jsonObject["entryId"]!!
+        val settings = project.service<BaselineSettings>()
+        settings.replace(BaselineSettings.Data(profiles = mutableListOf(
+            BaselineSettings.Profile("main", "Main", mutableListOf(BaselineSettings.Source(path = first.path))),
+            BaselineSettings.Profile("ci", "CI", mutableListOf(BaselineSettings.Source(path = second.path)))
+        ), activeProfileId = "ci"))
+        val index = project.service<BaselineIndexService>()
+        index.reload()
+        val pending = json(call("get_baseline_status"))
+        assertEquals("ci", pending["activeProfileId"]!!.jsonPrimitive.content)
+        assertEquals("CI", pending["activeProfileName"]!!.jsonPrimitive.content)
+        assertEquals("updating", pending["state"]!!.jsonPrimitive.content)
+        assertEquals(0, pending["entryCount"]!!.jsonPrimitive.int)
+        assertTrue(call("open_baseline_entry", buildJsonObject { put("entryId", oldId) }).isError)
+        awaitIndex { !it.isUpdating && it.snapshot.sources.keys == setOf(second.path) }
+        val status = json(call("get_baseline_status"))
+        assertEquals("ready", status["state"]!!.jsonPrimitive.content)
+        assertEquals(1, status["sources"]!!.jsonArray.size)
+        assertEquals(second.path, status["sources"]!!.jsonArray.single().jsonObject["path"]!!.jsonPrimitive.content)
+        val after = json(call("find_baseline_entries", buildJsonObject { put("filePath", php.path) }))
+        assertEquals(4, after["total"]!!.jsonPrimitive.int)
+        assertTrue(after["entries"]!!.jsonArray.all { it.jsonObject["baselineFile"]!!.jsonPrimitive.content == second.path })
+    }
+
     fun testUpdatingStateAndDistinctIdsForMultipleSources() {
         val (php, _) = configure()
         val second = myFixture.addFileToProject("config/second.neon", baseline()).virtualFile
         val settings = project.service<BaselineSettings>()
-        settings.replace(settings.state.copy(sources = (settings.state.sources + BaselineSettings.Source(path = second.path)).toMutableList()))
+        settings.replace(settings.state.copy(profiles = settings.state.profiles.map { profile ->
+            profile.deepCopy().also { it.sources += BaselineSettings.Source(path = second.path) }
+        }.toMutableList()))
         val index = project.service<BaselineIndexService>()
         index.reload()
         val pending = project.service<dev.baselinehighlighter.query.BaselineQueryService>().find(filePath = php.path)

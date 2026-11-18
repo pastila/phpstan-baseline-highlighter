@@ -9,6 +9,9 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SearchableConfigurable
+import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.InputValidatorEx
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.util.ProgressIndicatorBase
@@ -18,6 +21,7 @@ import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.table.JBTable
+import com.intellij.ui.SimpleListCellRenderer
 import dev.baselinehighlighter.BaselineBundle.message
 import dev.baselinehighlighter.core.BaselinePathResolver
 import dev.baselinehighlighter.core.BaselineConfigurationImporter
@@ -32,11 +36,27 @@ import javax.swing.JPanel
 import java.awt.FlowLayout
 import javax.swing.table.AbstractTableModel
 import java.util.concurrent.Future
+import java.util.Locale
+import java.util.UUID
+import javax.swing.JList
 
 class BaselineSourcesConfigurable(private val project: Project) : SearchableConfigurable {
     private var lifetime: com.intellij.openapi.Disposable? = null
     private val enabled = JBCheckBox(message("settings.enabled"))
-    private val rows = mutableListOf<BaselineSettings.Source>()
+    private var rows = mutableListOf<BaselineSettings.Source>()
+    private val profiles = mutableListOf<BaselineSettings.Profile>()
+    private var selectedProfileId = ""
+    private var updatingProfiles = false
+    private val profileChooser = ComboBox<BaselineSettings.Profile>().apply {
+        preferredSize = Dimension(200, preferredSize.height)
+        renderer = object : SimpleListCellRenderer<BaselineSettings.Profile>() {
+            init { putClientProperty("html.disable", true) }
+            override fun customize(list: JList<out BaselineSettings.Profile>, value: BaselineSettings.Profile?, index: Int, selected: Boolean, hasFocus: Boolean) {
+                text = value?.name.orEmpty()
+            }
+        }
+    }
+    private val deleteProfileButton = JButton(message("settings.profile.delete"))
     private val model = object : AbstractTableModel() {
         override fun getRowCount(): Int = rows.size
         override fun getColumnCount(): Int = 3
@@ -51,13 +71,15 @@ class BaselineSourcesConfigurable(private val project: Project) : SearchableConf
     }
     private val table = JBTable(model)
     private val diagnostics = JBTextArea().apply { isEditable = false; lineWrap = true; wrapStyleWord = true }
+    private val diagnosticsLabel = JLabel()
     private val importButton = JButton(message("settings.import"))
     private val cancelImportButton = JButton(message("settings.import.cancel")).apply { isVisible = false }
     private val importReport = JBTextArea().apply { isEditable = false; lineWrap = true; wrapStyleWord = true }
-    private val importScroll = JBScrollPane(importReport).apply { preferredSize = Dimension(700, 110); isVisible = false }
+    private val importScroll = JBScrollPane(importReport).apply { preferredSize = Dimension(700, 90); isVisible = false }
     private var currentImport: ProgressIndicatorBase? = null
     internal val isImporting: Boolean get() = currentImport != null
     internal val importSummary: String get() = importReport.text
+    internal val selectedProfile: String get() = selectedProfileId
 
     override fun getId(): String = "dev.baselinehighlighter.settings"
     override fun getDisplayName(): String = message("plugin.name")
@@ -70,6 +92,10 @@ class BaselineSourcesConfigurable(private val project: Project) : SearchableConf
     override fun createComponent(): JComponent {
         val uiLifetime = Disposer.newDisposable("Baseline settings UI")
         lifetime = uiLifetime
+        profileChooser.addActionListener {
+            if (!updatingProfiles) (profileChooser.selectedItem as? BaselineSettings.Profile)?.let { selectProfile(it.id) }
+        }
+        deleteProfileButton.addActionListener { deleteProfile() }
         importButton.addActionListener {
             FileChooser.chooseFile(importDescriptor(), project, null)?.let(::importConfiguration)
         }
@@ -104,16 +130,30 @@ class BaselineSourcesConfigurable(private val project: Project) : SearchableConf
         val header = JPanel(BorderLayout(0, 8)).apply {
             add(enabled, BorderLayout.NORTH)
             add(JLabel(message("settings.help")), BorderLayout.CENTER)
+            add(JPanel(FlowLayout(FlowLayout.LEADING, 4, 0)).apply {
+                add(JLabel(message("settings.profile.label")).apply { labelFor = profileChooser })
+                add(profileChooser)
+                add(JButton(message("settings.profile.new")).apply {
+                    addActionListener { askProfileName(message("settings.profile.new"), uniqueName(message("settings.profile.new.name", profiles.size + 1)))?.let { addProfile(it) } }
+                })
+                add(JButton(message("settings.profile.copy")).apply {
+                    addActionListener { askProfileName(message("settings.profile.copy"), uniqueName(message("settings.profile.copy.name", currentProfile().name)))?.let { addProfile(it, true) } }
+                })
+                add(JButton(message("settings.profile.rename")).apply {
+                    addActionListener { askProfileName(message("settings.profile.rename"), currentProfile().name, selectedProfileId)?.let(::renameProfile) }
+                })
+                add(deleteProfileButton)
+            }, BorderLayout.SOUTH)
         }
         val bottom = JPanel(BorderLayout(0, 5)).apply {
-            add(JLabel(message("settings.diagnostics")), BorderLayout.NORTH)
-            add(JBScrollPane(diagnostics).apply { preferredSize = Dimension(700, 150) }, BorderLayout.CENTER)
+            add(diagnosticsLabel, BorderLayout.NORTH)
+            add(JBScrollPane(diagnostics).apply { preferredSize = Dimension(700, 120) }, BorderLayout.CENTER)
             add(JButton(message("settings.reload")).apply { addActionListener { project.service<BaselineIndexService>().reload() } }, BorderLayout.SOUTH)
         }
         project.messageBus.connect(uiLifetime).subscribe(BaselineIndexService.TOPIC, BaselineIndexListener { updateDiagnostics() })
         reset()
         return JPanel(BorderLayout(0, 12)).apply {
-            preferredSize = Dimension(800, 600)
+            preferredSize = Dimension(880, 650)
             add(header, BorderLayout.NORTH)
             add(toolbar, BorderLayout.CENTER)
             add(bottom, BorderLayout.SOUTH)
@@ -121,6 +161,73 @@ class BaselineSourcesConfigurable(private val project: Project) : SearchableConf
     }
 
     private fun stopEditing() { if (table.isEditing) table.cellEditor.stopCellEditing() }
+
+    private fun currentProfile(): BaselineSettings.Profile = profiles.first { it.id == selectedProfileId }
+
+    private fun nameError(name: String, exceptId: String? = null): String? = when {
+        name.isBlank() -> message("settings.profile.empty.name")
+        profiles.any { it.id != exceptId && it.name.trim().lowercase(Locale.ROOT) == name.trim().lowercase(Locale.ROOT) } -> message("settings.profile.duplicate.name")
+        else -> null
+    }
+
+    private fun uniqueName(base: String): String {
+        var name = base
+        var suffix = 2
+        while (nameError(name) != null) name = message("settings.profile.numbered", base, suffix++)
+        return name
+    }
+
+    private fun askProfileName(title: String, initial: String, exceptId: String? = null): String? =
+        Messages.showInputDialog(project, message("settings.profile.name"), title, null, initial, object : InputValidatorEx {
+            override fun getErrorText(inputString: String): String? = nameError(inputString, exceptId)
+        })
+
+    internal fun addProfile(name: String, copySelected: Boolean = false): String {
+        stopEditing()
+        nameError(name)?.let { throw ConfigurationException(it) }
+        val profile = BaselineSettings.Profile(UUID.randomUUID().toString(), name.trim(),
+            if (copySelected) rows.map { it.copy() }.toMutableList() else mutableListOf())
+        profiles += profile
+        refreshProfiles(profile.id)
+        return profile.id
+    }
+
+    internal fun renameProfile(name: String) {
+        nameError(name, selectedProfileId)?.let { throw ConfigurationException(it) }
+        currentProfile().name = name.trim()
+        profileChooser.repaint()
+    }
+
+    internal fun deleteProfile() {
+        if (profiles.size <= 1) throw ConfigurationException(message("settings.profile.last"))
+        stopEditing()
+        val index = profiles.indexOfFirst { it.id == selectedProfileId }
+        profiles.removeAt(index)
+        refreshProfiles(profiles[minOf(index, profiles.lastIndex)].id)
+    }
+
+    internal fun selectProfile(id: String) {
+        val selected = profiles.first { it.id == id }
+        if (id == selectedProfileId && rows === selected.sources) return
+        stopEditing()
+        cancelImport()
+        showImportReport("")
+        selectedProfileId = id
+        rows = selected.sources
+        updatingProfiles = true
+        try { profileChooser.selectedItem = selected } finally { updatingProfiles = false }
+        model.fireTableDataChanged()
+    }
+
+    private fun refreshProfiles(id: String) {
+        updatingProfiles = true
+        try {
+            profileChooser.removeAllItems()
+            profiles.forEach(profileChooser::addItem)
+        } finally { updatingProfiles = false }
+        deleteProfileButton.isEnabled = profiles.size > 1
+        selectProfile(id)
+    }
 
     internal fun importConfiguration(file: VirtualFile): Future<*>? {
         val owner = lifetime ?: return null
@@ -195,15 +302,25 @@ class BaselineSourcesConfigurable(private val project: Project) : SearchableConf
     override fun isModified(): Boolean {
         stopEditing()
         val state = project.service<BaselineSettings>().state
-        return enabled.isSelected != state.enabled || rows != state.sources
+        return enabled.isSelected != state.enabled || selectedProfileId != state.activeProfileId || profiles != state.profiles
     }
 
     override fun apply() {
         stopEditing()
         val index = project.service<BaselineIndexService>()
-        if (rows.any { it.path.isBlank() }) throw ConfigurationException(message("settings.empty.path"))
-        if (rows.map { index.normalize(it.path) }.distinct().size != rows.size) throw ConfigurationException(message("settings.duplicate"))
-        project.service<BaselineSettings>().replace(BaselineSettings.Data(enabled.isSelected, rows.map { it.copy(path = it.path.trim(), baseDirectory = it.baseDirectory.trim()) }.toMutableList()))
+        for (profile in profiles) {
+            nameError(profile.name, profile.id)?.let { throw ConfigurationException(it) }
+            if (profile.sources.any { it.path.isBlank() }) throw ConfigurationException(message("settings.profile.invalid", profile.name, message("settings.empty.path")))
+            if (profile.sources.map { index.normalize(it.path.trim()) }.distinct().size != profile.sources.size) throw ConfigurationException(message("settings.profile.invalid", profile.name, message("settings.duplicate")))
+        }
+        profiles.forEach { profile ->
+            profile.name = profile.name.trim()
+            profile.sources.forEach { it.path = it.path.trim(); it.baseDirectory = it.baseDirectory.trim() }
+        }
+        project.service<BaselineSettings>().replace(BaselineSettings.Data(enabled = enabled.isSelected,
+            profiles = profiles.map { it.deepCopy() }.toMutableList(), activeProfileId = selectedProfileId))
+        model.fireTableDataChanged()
+        profileChooser.repaint()
         index.reload()
     }
 
@@ -212,15 +329,18 @@ class BaselineSourcesConfigurable(private val project: Project) : SearchableConf
         showImportReport("")
         val state = project.service<BaselineSettings>().state
         enabled.isSelected = state.enabled
-        rows.clear()
-        rows.addAll(state.sources.map { it.copy() })
-        model.fireTableDataChanged()
+        profiles.clear()
+        profiles.addAll(state.profiles.map { it.deepCopy() })
+        refreshProfiles(state.activeProfileId)
         updateDiagnostics()
     }
 
     private fun updateDiagnostics() {
         val snapshot = project.service<BaselineIndexService>().snapshot
-        diagnostics.text = if (snapshot.sources.isEmpty()) message("settings.no.sources") else buildString {
+        val settings = project.service<BaselineSettings>().state
+        diagnosticsLabel.text = message("settings.diagnostics.profile", settings.activeProfile()?.name.orEmpty())
+        diagnostics.text = if (project.service<BaselineIndexService>().isUpdating) message("settings.diagnostics.updating")
+        else if (snapshot.sources.isEmpty()) message("settings.no.sources") else buildString {
             for ((path, status) in snapshot.sources) {
                 appendLine(path)
                 when {
@@ -252,6 +372,8 @@ class BaselineSourcesConfigurable(private val project: Project) : SearchableConf
         cancelImport()
         importButton.actionListeners.forEach(importButton::removeActionListener)
         cancelImportButton.actionListeners.forEach(cancelImportButton::removeActionListener)
+        profileChooser.actionListeners.forEach(profileChooser::removeActionListener)
+        deleteProfileButton.actionListeners.forEach(deleteProfileButton::removeActionListener)
         lifetime?.let(Disposer::dispose)
         lifetime = null
     }

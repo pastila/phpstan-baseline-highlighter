@@ -10,6 +10,7 @@ import com.intellij.psi.util.PsiTreeUtil
 import dev.baselinehighlighter.php.PhpDeclarationProvider
 import dev.baselinehighlighter.core.*
 import dev.baselinehighlighter.index.BaselineIndexService
+import dev.baselinehighlighter.settings.BaselineSettings
 
 object PhpBaselineMatcher {
     private val cacheKey = Key.create<CachedValue<Map<Int, List<BoundEntry>>>>("baseline.declaration.bindings")
@@ -38,7 +39,7 @@ object PhpBaselineMatcher {
                     byOffset[PsiTreeUtil.getDeepestFirst(function.identifier).textOffset] = records
                 }
             }
-            CachedValueProvider.Result.create(byOffset.toMap(), file, index)
+            CachedValueProvider.Result.create(byOffset.toMap(), file, index, file.project.service<BaselineSettings>())
         }, false)
     }
 }

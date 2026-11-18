@@ -23,8 +23,9 @@ class BaselineQueryService(private val project: Project) {
 
     private data class Candidate(val indexed: IndexedEntry, val className: String?, val methodName: String?, val binding: String, val functionName: String? = null)
 
-    private val remembered = object : LinkedHashMap<String, IndexedEntry>(128, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, IndexedEntry>?): Boolean = size > 1000
+    private data class Remembered(val entry: IndexedEntry, val settings: BaselineSettings.Data)
+    private val remembered = object : LinkedHashMap<String, Remembered>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Remembered>?): Boolean = size > 1000
     }
 
     fun find(filePath: String? = null, className: String? = null, methodName: String? = null, offset: Int = 0, limit: Int = 50, identifier: String? = null, functionName: String? = null): SearchResult {
@@ -87,17 +88,19 @@ class BaselineQueryService(private val project: Project) {
         if (!project.service<BaselineSettings>().state.enabled) return SearchResult("disabled", emptyList(), 0, offset, limit)
         if (index.isUpdating || index.modificationCount != revision || project.service<BaselineSettings>().state !== settings) return SearchResult("updating", emptyList(), 0, offset, limit)
         val page = matches.asSequence().drop(offset).take(limit).map { match(it.indexed, it.className, it.methodName, it.binding, it.functionName) }.toList()
-        synchronized(remembered) { page.forEach { remembered[it.entryId] = it.indexed } }
+        synchronized(remembered) { page.forEach { remembered[it.entryId] = Remembered(it.indexed, settings) } }
         return SearchResult("ready", page, matches.size, offset, limit)
     }
 
     fun selected(entryId: String): IndexedEntry {
         val settings = project.service<BaselineSettings>().state
         require(settings.enabled) { "Baseline highlighting is disabled." }
-        val selected = synchronized(remembered) { remembered[entryId] }
-        require(selected != null) { "Unknown or expired entryId. Run find_baseline_entries again." }
+        val record = synchronized(remembered) { remembered[entryId] }
+        require(record != null) { "Unknown or expired entryId. Run find_baseline_entries again." }
+        require(record.settings === settings) { message("query.profile.changed") }
+        val selected = record.entry
         val index = project.service<BaselineIndexService>()
-        require(settings.sources.any { it.enabled && it.path.isNotBlank() && index.normalize(it.path) == selected.sourcePath }) {
+        require(settings.activeSources().any { it.enabled && it.path.isNotBlank() && index.normalize(it.path) == selected.sourcePath }) {
             "The baseline source is no longer enabled. Run find_baseline_entries again."
         }
         return selected

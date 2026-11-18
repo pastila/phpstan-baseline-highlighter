@@ -42,7 +42,8 @@ data class SourceStatus(
     val unavailable: Boolean = false,
     val missingTargets: List<String> = emptyList(),
 )
-data class IndexSnapshot(val byFile: Map<String, List<IndexedEntry>> = emptyMap(), val sources: Map<String, SourceStatus> = emptyMap())
+data class IndexSnapshot(val byFile: Map<String, List<IndexedEntry>> = emptyMap(), val sources: Map<String, SourceStatus> = emptyMap(),
+    val settings: BaselineSettings.Data? = null)
 fun interface BaselineIndexListener { fun updated() }
 
 @Service(Service.Level.PROJECT)
@@ -60,11 +61,15 @@ class BaselineIndexService(private val project: Project, private val coroutineSc
 
     override fun getModificationCount(): Long = version.get()
     fun normalize(path: String): String = BaselinePathResolver.resolve(path, project.basePath ?: "", SystemInfoRt.isFileSystemCaseSensitive)
-    fun entries(path: String): List<IndexedEntry> = snapshot.byFile[normalize(path)].orEmpty()
-    val isUpdating: Boolean get() = publishedGeneration != generation.get()
+    fun entries(path: String): List<IndexedEntry> {
+        val current = snapshot
+        return if (current.settings === project.service<BaselineSettings>().state) current.byFile[normalize(path)].orEmpty() else emptyList()
+    }
+    val isUpdating: Boolean get() = publishedGeneration != generation.get() || snapshot.settings !== project.service<BaselineSettings>().state
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
+        project.service<BaselineSettings>().addChangeListener(this) { if (!project.isDisposed) reload() }
         PhpDeclarationProvider.EP.addChangeListener(coroutineScope, Runnable { reload() })
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(object : DocumentListener {
             override fun documentChanged(event: DocumentEvent) { changed(event.document) }
@@ -99,10 +104,9 @@ class BaselineIndexService(private val project: Project, private val coroutineSc
         request(emptySet(), all = true)
     }
 
-    private fun configuredSources(): List<Pair<String, String>> {
-        val settings = project.service<BaselineSettings>().state
+    private fun configuredSources(settings: BaselineSettings.Data = project.service<BaselineSettings>().state): List<Pair<String, String>> {
         if (!settings.enabled) return emptyList()
-        return settings.sources.filter { it.enabled && it.path.isNotBlank() }.map { source ->
+        return settings.activeSources().filter { it.enabled && it.path.isNotBlank() }.map { source ->
             val path = normalize(source.path)
             val base = if (source.baseDirectory.isBlank()) path.substringBeforeLast('/') else normalize(source.baseDirectory)
             path to base
@@ -123,15 +127,16 @@ class BaselineIndexService(private val project: Project, private val coroutineSc
         if (project.isDisposed) return
         val (dirty, all) = synchronized(lock) { pending.toSet() to refreshAll }
         val previous = snapshot
+        val settings = project.service<BaselineSettings>().state
         val sources = linkedMapOf<String, SourceStatus>()
-        for ((path, base) in configuredSources()) {
+        for ((path, base) in configuredSources(settings)) {
             if (generation.get() != ticket || project.isDisposed) return
-            sources[path] = if (!all && path !in dirty && path in previous.sources) previous.sources.getValue(path) else readSource(path, base, ticket)
+            sources[path] = if (!all && previous.settings === settings && path !in dirty && path in previous.sources) previous.sources.getValue(path) else readSource(path, base, ticket)
         }
         val byFile = sources.values.flatMap { it.entries }.groupBy { it.targetPath }
         synchronized(lock) {
-            if (generation.get() != ticket || project.isDisposed) return
-            snapshot = IndexSnapshot(byFile, sources)
+            if (generation.get() != ticket || project.isDisposed || project.service<BaselineSettings>().state !== settings) return
+            snapshot = IndexSnapshot(byFile, sources, settings)
             publishedGeneration = ticket
             version.incrementAndGet()
             pending.clear()

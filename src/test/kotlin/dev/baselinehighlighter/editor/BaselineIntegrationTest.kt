@@ -101,7 +101,9 @@ class BaselineIntegrationTest : BasePlatformTestCase() {
         val (php, _) = configure()
         val second = myFixture.addFileToProject("config/second.neon", baseline()).virtualFile
         val settings = project.service<BaselineSettings>()
-        settings.replace(settings.state.copy(sources = (settings.state.sources + BaselineSettings.Source(path = second.path)).toMutableList()))
+        settings.replace(settings.state.copy(profiles = settings.state.profiles.map { profile ->
+            profile.deepCopy().also { it.sources += BaselineSettings.Source(path = second.path) }
+        }.toMutableList()))
         project.service<BaselineIndexService>().reload()
         awaitIndex { it.entries(php.path).size == 2 }
         settings.replace(settings.state.copy(enabled = false))
@@ -332,5 +334,28 @@ class BaselineIntegrationTest : BasePlatformTestCase() {
         assertTrue(provider.javaClass.name.contains(if (backend == "openphp") ".openphp." else ".jetbrains."))
         val missing = if (backend == "openphp") "com.jetbrains.php" else "ru.openide.openphp"
         assertTrue(com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId(missing))?.isEnabled != true)
+    }
+
+    fun testBehaviorProfileSwitchInvalidatesCachedBindingsBeforePublishingTheNewIndex() {
+        val (php, first) = configure()
+        val second = myFixture.addFileToProject("config/ci.neon", baseline("other")).virtualFile
+        val settings = project.service<BaselineSettings>()
+        settings.replace(BaselineSettings.Data(profiles = mutableListOf(
+            BaselineSettings.Profile("main", "Main", mutableListOf(BaselineSettings.Source(path = first.path))),
+            BaselineSettings.Profile("ci", "CI", mutableListOf(BaselineSettings.Source(path = second.path)))
+        ), activeProfileId = "main"))
+        val index = project.service<BaselineIndexService>()
+        index.reload()
+        awaitIndex { !it.isUpdating && it.entries(php.path).size == 1 }
+        myFixture.configureFromExistingVirtualFile(php)
+        assertTrue(methodIsBound(myFixture.file, "save"))
+        assertFalse(methodIsBound(myFixture.file, "other"))
+        settings.replace(settings.state.copy(activeProfileId = "ci"))
+        assertTrue(index.isUpdating)
+        assertTrue(PhpBaselineMatcher.bindings(myFixture.file).isEmpty())
+        index.reload()
+        awaitIndex { !it.isUpdating && it.entries(php.path).singleOrNull()?.owner?.methodName == "other" }
+        assertFalse(methodIsBound(myFixture.file, "save"))
+        assertTrue(methodIsBound(myFixture.file, "other"))
     }
 }

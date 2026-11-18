@@ -35,7 +35,7 @@ internal object BaselinePathNavigation {
         val projectBase = project.basePath.orEmpty()
         fun normalize(value: String) = BaselinePathResolver.resolve(value, projectBase, SystemInfoRt.isFileSystemCaseSensitive)
         val sourcePath = normalize(file.path)
-        val configuredBase = project.service<BaselineSettings>().state.sources.firstOrNull {
+        val configuredBase = project.service<BaselineSettings>().state.activeSources().firstOrNull {
             it.path.isNotBlank() && normalize(it.path) == sourcePath
         }?.baseDirectory?.takeIf { it.isNotBlank() }
         val base = configuredBase?.let(::normalize) ?: file.parent?.path ?: return null

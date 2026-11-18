@@ -16,6 +16,7 @@ import com.intellij.ui.awt.RelativePoint
 import dev.baselinehighlighter.BaselineBundle.message
 import dev.baselinehighlighter.core.*
 import dev.baselinehighlighter.index.BaselineIndexService
+import dev.baselinehighlighter.settings.BaselineSettings
 import javax.swing.JList
 
 object BaselineNavigation {
@@ -78,15 +79,28 @@ object BaselineNavigation {
     }
 
     fun navigate(project: Project, selected: IndexedEntry) {
+        val settings = project.service<BaselineSettings>().state
         ApplicationManager.getApplication().executeOnPooledThread {
-            val target = resolve(selected)
+            val target = if (isActive(project, selected)) resolve(selected) else null
             ApplicationManager.getApplication().invokeLater {
                 if (project.isDisposed) return@invokeLater
-                if (target == null || !open(project, target)) {
+                if (target == null || project.service<BaselineSettings>().state !== settings || !isActive(project, selected) || !open(project, target)) {
                     project.service<BaselineIndexService>().reload()
                     Messages.showInfoMessage(project, message("navigation.changed"), message("plugin.name"))
                 }
             }
+        }
+    }
+
+    internal fun isActive(project: Project, selected: IndexedEntry): Boolean {
+        val settings = project.service<BaselineSettings>().state
+        if (!settings.enabled) return false
+        val index = project.service<BaselineIndexService>()
+        return settings.activeSources().any { source ->
+            if (!source.enabled || source.path.isBlank()) return@any false
+            val path = index.normalize(source.path)
+            val base = if (source.baseDirectory.isBlank()) path.substringBeforeLast('/') else index.normalize(source.baseDirectory)
+            path == selected.sourcePath && index.normalize(BaselinePathResolver.resolve(selected.entry.path, base)) == selected.targetPath
         }
     }
 }

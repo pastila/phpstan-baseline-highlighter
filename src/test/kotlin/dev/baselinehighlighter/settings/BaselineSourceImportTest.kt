@@ -65,7 +65,7 @@ class BaselineSourceImportTest : BasePlatformTestCase() {
             assertFalse(descriptor.isSelectable(source.parent))
             assertTrue(descriptor.isShowHiddenFiles)
             awaitImport(configurable, configurable.importConfiguration(config))
-            assertTrue(settings.state.sources.isEmpty())
+            assertTrue(settings.state.activeSources().isEmpty())
             assertTrue(configurable.isModified)
             val table = table(component)
             assertEquals(1, table.rowCount)
@@ -104,8 +104,8 @@ class BaselineSourceImportTest : BasePlatformTestCase() {
             configurable.apply()
             val state = project.service<BaselineSettings>().state
             assertFalse(state.enabled)
-            assertEquals(original, state.sources.first())
-            assertEquals(2, state.sources.size)
+            assertEquals(original, state.activeSources().first())
+            assertEquals(2, state.activeSources().size)
         } finally { configurable.disposeUIResources() }
     }
 
@@ -160,7 +160,7 @@ class BaselineSourceImportTest : BasePlatformTestCase() {
             assertEquals(1, buttons(reopened).single { it.text == dev.baselinehighlighter.BaselineBundle.message("settings.import") }.actionListeners.size)
             awaitImport(configurable, configurable.importConfiguration(source))
             assertEquals(1, table(reopened).rowCount)
-            assertTrue(project.service<BaselineSettings>().state.sources.isEmpty())
+            assertTrue(project.service<BaselineSettings>().state.activeSources().isEmpty())
         } finally { configurable.disposeUIResources() }
     }
 
