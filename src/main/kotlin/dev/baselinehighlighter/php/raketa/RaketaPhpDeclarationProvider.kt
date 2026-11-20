@@ -5,6 +5,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
+import com.intellij.psi.PsiNameIdentifierOwner
 import com.intellij.psi.SyntaxTraverser
 import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.php.PhpIndex
@@ -77,7 +78,10 @@ class RaketaPhpDeclarationProvider : PhpDeclarationProvider {
         .filter { it.kind == "IDENTIFIER" || it.kind == "BACKSLASH" }.joinToString("") { it.text }
 
     private fun PhpClass.methods(): Sequence<Pair<PsiElement, PsiElement>> =
-        childrenOfKind("METHOD_DECLARATION").mapNotNull { method -> method.identifier()?.let { it to method } }
+        childrenOfKind("METHOD_DECLARATION").mapNotNull { method ->
+            val identifier = (method as? PsiNameIdentifierOwner)?.nameIdentifier ?: method.identifier()
+            identifier?.let { it to method }
+        }
 
     private fun qualified(name: String): String = "\\" + name.trimStart('\\')
 

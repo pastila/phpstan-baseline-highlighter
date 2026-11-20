@@ -4,13 +4,13 @@
 
 PHP-поддержка подключается опциональными адаптерами для **JetBrains PHP** (`com.jetbrains.php`), **PHP for OpenIDE** (`ru.openide.openphp`) и **Raketa PHP** (`ru.raketa.php`). Без PHP-плагина доступны индекс, настройки и список записей файла. Для маркеров объявлений и поиска по PHP-символам нужен один из поддерживаемых PHP-плагинов.
 
-В Raketa PHP маркеры используют объявления, которые распознаёт его парсер. В текущем парсере 262 это классы, интерфейсы, трейты, перечисления, методы и именованные функции на уровне файла или пространства имён.
+В Raketa PHP маркеры используют объявления, которые распознаёт его парсер. Поддержка именованных функций внутри блоков зависит от сборки Raketa PHP.
 
 Baseline фиксирует исключения, поэтому маркер **не подтверждает наличие нарушения в текущем коде**. Плагин не изменяет baseline и не подсвечивает точные строки ошибок.
 
 ## Установка и настройка
 
-1. Скачайте ZIP из [последнего релиза](https://github.com/pastila/phpstan-baseline-highlighter/releases/latest) или соберите `build/distributions/phpstan-baseline-highlighter-0.1.17.zip` из текущего кода.
+1. Скачайте ZIP из [последнего релиза](https://github.com/pastila/phpstan-baseline-highlighter/releases/latest) или соберите `build/distributions/phpstan-baseline-highlighter-0.1.18.zip` из текущего кода.
 2. Откройте **Settings → Plugins → ⚙ → Install Plugin from Disk** и выберите ZIP целиком.
 3. В проекте откройте **Settings → Languages & Frameworks → PHPStan Baseline Highlighter**.
 4. Выберите или создайте профиль. Нажмите **Import from PHPStan config…** и выберите `.neon` или `.neon.dist` нужной конфигурации либо добавьте baseline кнопкой **+**. Проверьте строки в таблице и нажмите **Apply**.

@@ -6,6 +6,8 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiNameIdentifierOwner
+import com.intellij.psi.SyntaxTraverser
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -68,8 +70,16 @@ class BaselineFunctionIntegrationTest : BasePlatformTestCase() {
         """.trimIndent())
         val functions = PhpDeclarationProvider.forFile(file)!!.functions(file)
         val expected = mutableSetOf("app\\run", "app\\outer", "other\\run", "globalrun")
-        // Raketa PHP 262 does not emit function declaration nodes from statement blocks.
-        if (System.getProperty("baseline.phpBackend") != "raketa") expected += setOf("app\\conditional", "app\\inner")
+        val nestedNames = setOf("conditional", "inner")
+        val parsedNestedNames = if (System.getProperty("baseline.phpBackend") == "raketa") {
+            // Some Raketa PHP builds do not emit function declaration nodes from statement blocks.
+            SyntaxTraverser.psiTraverser(file).asSequence()
+                .filter { it.node?.elementType?.toString() == "FUNCTION_DECLARATION" }
+                .mapNotNull { (it as? PsiNameIdentifierOwner)?.name }
+                .filter { it in nestedNames }
+                .toSet()
+        } else nestedNames
+        expected += parsedNestedNames.map { "app\\$it" }
         assertEquals(expected, functions.map { BaselineMatcher.key(it.fqn) }.toSet())
         assertEquals(expected.size, functions.size)
         assertTrue(functions.all { it.identifier.text.isNotBlank() })
